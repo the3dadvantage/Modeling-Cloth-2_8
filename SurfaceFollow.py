@@ -58,9 +58,6 @@ def set_key_coords(coords, key, ob):
     """Writes a flattened array to one of the object's shape keys."""
     ob.data.shape_keys.key_blocks[key].data.foreach_set("co", coords.ravel())
     ob.data.update()
-    #temporary shape key update hack until dependency graph is updated
-    ob.data.shape_keys.key_blocks[key].mute = True
-    ob.data.shape_keys.key_blocks[key].mute = False
 
 def get_triangle_normals(tri_coords):
     '''does the same as get_triangle_normals 
