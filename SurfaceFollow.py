@@ -58,7 +58,10 @@ def set_key_coords(coords, key, ob):
     """Writes a flattened array to one of the object's shape keys."""
     ob.data.shape_keys.key_blocks[key].data.foreach_set("co", coords.ravel())
     ob.data.update()
-
+    # Workaround for dependancy graph issue
+    ob.data.shape_keys.key_blocks[key].mute = True
+    ob.data.shape_keys.key_blocks[key].mute = False
+    
 def get_triangle_normals(tri_coords):
     '''does the same as get_triangle_normals 
     but I need to compare their speed'''    
@@ -392,7 +395,7 @@ def multi_update():
         try:            
             child = obs[i]
             coords = s_coords[value['surface'].name]
-            project = barycentric_remap_multi(coords[value['tri_indexer']], *value['scalars'], value['length'])
+            project = barycentric_remap_multi(coords[value['tri_indexer']], value['scalars'][0], value['scalars'][1], value['scalars'][2], value['scalars'][3], value['scalars'][4], value['length'])
             set_key_coords(transform_matrix(project, child, back=True), 'surface follow', child)
         except (KeyError, RuntimeError):
             cull_list.append(i)
@@ -413,15 +416,15 @@ def remove_handler(type):
         if run_handler in bpy.app.handlers.scene_update_pre:
             bpy.app.handlers.scene_update_pre.remove(run_handler)
     if type == 'frame':
-        if run_handler in bpy.app.handlers.frame_change_pre:
-            bpy.app.handlers.frame_change_pre.remove(run_handler)
+        if run_handler in bpy.app.handlers.frame_change_post:
+            bpy.app.handlers.frame_change_post.remove(run_handler)
 
 def add_handler(type):
     '''adds handler from the scene'''
     if type == 'scene':        
         bpy.app.handlers.scene_update_pre.append(run_handler)
     if type == 'frame':
-        bpy.app.handlers.frame_change_pre.append(run_handler)
+        bpy.app.handlers.frame_change_post.append(run_handler)
     
 # run on prop callback
 def toggle_display(self, context):
