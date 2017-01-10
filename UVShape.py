@@ -129,19 +129,24 @@ def total_length_selected(ed='empty', coords='empty', ob='empty'):
 
 def basic_unwrap():
     ob = bpy.context.object
-    layers = [i.name for i in ob.data.uv_layers]
     mode = ob.mode
     data = ob.data
     key = ob.active_shape_key_index
     bpy.ops.object.mode_set(mode='OBJECT')        
+    layers = [i.name for i in ob.data.uv_layers]
+    if "UV_Shape_key" not in layers:
+        bpy.ops.mesh.uv_texture_add()
+        ob.data.uv_layers[len(ob.data.uv_layers) - 1].name = 'UV_Shape_key'
+    
+    ob.data.uv_layers.active_index = len(ob.data.uv_layers) - 1
     ob.active_shape_key_index = 0
     data.vertices.foreach_set('select', np.ones(len(data.vertices), dtype=np.bool))
+
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.0635838)
     bpy.ops.object.mode_set(mode=mode)
     ob.active_shape_key_index = key
-    new_layer = [i.name for i in ob.data.uv_layers if i not in layers]
-    ob.data.uv_layers[new_layer[0]].name = 'UV_Shape_key'
+
 
 
 def get_piece_bool(num, dict):
@@ -231,18 +236,19 @@ def uv_to_shape_key(ob='empty', uv_layer='UV_Shape_key', adjust=True):
     #bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
     bpy.ops.object.mode_set(mode='OBJECT')
     divide_garment(ob, dict)
-    basic_unwrap()
-    uv = ob.data.uv_layers
+    if not bpy.context.scene.use_active_uv_for_shape:    
+        basic_unwrap()
 
+    uv = ob.data.uv_layers
     bpy.context.scene.update()
     if len(uv) > 0:
-        if uv_layer == 'empty':
+        if bpy.context.scene.use_active_uv_for_shape:
             idx = uv.active_index
             uv_layer = uv[idx].name
         if ob.data.shape_keys == None:
             ob.shape_key_add('Basis')    
         if 'UV_Shape_key' not in ob.data.shape_keys.key_blocks:
-            ob.shape_key_add(uv_layer)
+            ob.shape_key_add('UV_Shape_key')
         uv_co = get_uv_coords(ob, uv_layer, proxy=False)
         uv_list = []
         face_verts = dict['v_in_faces']
@@ -375,6 +381,10 @@ def create_properties():
         description="Changes the relative scale of an object", 
         default=1.0, precision=7, update=update_relative)
 
+    bpy.types.Scene.use_active_uv_for_shape = bpy.props.BoolProperty(name="Use Active", 
+        description="Create shape from active uv map. Otherwise generate new", 
+        default=False)
+
 def remove_properties():
     """It's never a good idea to clean your marble collection while skydiving"""
     del(bpy.types.Scene.base_select_length)
@@ -398,6 +408,7 @@ class Print3DTools(bpy.types.Panel):
         col = layout.column()
         col.label(text="UV Tools")
         col.operator("object.shape_from_uv", text="Create UV Shape", icon='SHAPEKEY_DATA')
+        col.prop(bpy.context.scene, "use_active_uv_for_shape", text="Use Active Map", icon='OUTLINER_OB_LATTICE')
         #col.operator("object.update_line_lengths", text="Update Measurements", icon='FILE_REFRESH')
         #col.prop(bpy.context.scene, "base_select_length", text="Base Select Length", icon='FORCE_HARMONIC')                    
         #col.prop(bpy.context.scene, "shape_select_length", text="Shape Select Length", icon='FORCE_HARMONIC')                    
