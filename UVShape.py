@@ -218,7 +218,7 @@ def divide_garment(ob, dict):
         vert = remaining[0]
 #################################
 
-def uv_to_shape_key(ob='empty', uv_layer='UV_Shape_key', adjust=True):
+def uv_to_shape_key(ob='empty', uv_layer='UV_Shape_key', adjust=False):
     '''Takes the active uv layer and creates a shape key
     uv_layer is a string that can be the name of a uv layer
     otherwise the active uv layer will be used'''    
@@ -260,7 +260,7 @@ def uv_to_shape_key(ob='empty', uv_layer='UV_Shape_key', adjust=True):
         ins = np.insert(uv_co,2,0, axis=1)
         x_start = 0
         y_min = 0
-        if adjust:
+        if bpy.context.scene.uv_shape_adjust_scale:
             coords = get_coords(ob)
             edge_idx = get_edge_idx(ob)
             for i in dict['islands']:     
@@ -340,67 +340,12 @@ def update_relative(self, context):
 def create_uv_shape():
     uv_to_shape_key()
 
-
-def autosplit_geometry():
-    ob = bpy.context.object
-    if ob.type == 'MESH':    
-        # manage object and select settings:
-        mode = ob.mode
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.reveal()
-        bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='FACE')
-        bpy.context.scene.tool_settings.use_uv_select_sync = False
-        
-        # initalize remaining:
-        remaining = 1
-        
-        # loop over islands
-        while remaining > 0:    
-            # start with all uv data visible
-            bpy.ops.mesh.select_all(action='SELECT')
-            bpy.ops.uv.select_all(action='DESELECT')
-
-            # randomly select an island and move that selection to the 3d view
-            bpy.ops.uv.select_linked_pick(location=(.5,.5))
-            bpy.ops.uv.hide(unselected=True)
-            
-            # split the sected area and hide it
-            bpy.ops.mesh.split()
-            bpy.ops.mesh.hide(unselected=False)
-            
-            # select whatever's left so we can count remaining
-            bpy.ops.mesh.select_all(action='SELECT')
-            bpy.ops.object.mode_set(mode='OBJECT')
-            
-            # use numpy to count remaining
-            stored = np.zeros(len(ob.data.vertices), dtype=np.bool)
-            ob.data.vertices.foreach_get('select', stored)
-            remaining = len(stored[stored])
-            
-            # go back to edit mode and start over
-            bpy.ops.object.mode_set(mode='EDIT')
-        
-        # restore mesh mode and unhide.
-        bpy.ops.mesh.reveal()            
-        bpy.ops.object.mode_set(mode=mode)    
-    else:
-        return
-    
-
 class ShapeFromUV(bpy.types.Operator):
     '''Takes the active uv map and makes a shape key'''
     bl_idname = "object.shape_from_uv"
     bl_label = "shape from uv"
     def execute(self, context):
         create_uv_shape()
-        return {'FINISHED'}
-
-class AutosplitGeometry(bpy.types.Operator):
-    '''Takes the active uv map and divides up the geometry'''
-    bl_idname = "object.autosplit_geometry"
-    bl_label = "autosplit geometry"
-    def execute(self, context):
-        autosplit_geometry()
         return {'FINISHED'}
 
 class UpdateLineLengths(bpy.types.Operator):
@@ -440,8 +385,14 @@ def create_properties():
         description="Create shape from active uv map. Otherwise generate new", 
         default=False)
 
+    bpy.types.Scene.uv_shape_adjust_scale = bpy.props.BoolProperty(name="Preserve Scale", 
+        description="Rescale islands to match 3d size", 
+        default=True)
+
+
 def remove_properties():
     """It's never a good idea to clean your marble collection while skydiving"""
+    del(bpy.types.Scene.uv_shape_adjust_scale)
     del(bpy.types.Scene.base_select_length)
     del(bpy.types.Scene.shape_select_length)
     del(bpy.types.Scene.shape_base_difference)
@@ -463,8 +414,9 @@ class Print3DTools(bpy.types.Panel):
         col = layout.column()
         col.label(text="UV Tools")
         col.operator("object.shape_from_uv", text="Create UV Shape", icon='SHAPEKEY_DATA')
-        col.operator("object.autosplit_geometry", text="Autosplit Geometry", icon='UV_ISLANDSEL')
         col.prop(bpy.context.scene, "use_active_uv_for_shape", text="Use Active Map", icon='OUTLINER_OB_LATTICE')
+        col.prop(bpy.context.scene, "uv_shape_adjust_scale", text="Rescale Islands", icon='BORDERMOVE')
+        
         #col.operator("object.update_line_lengths", text="Update Measurements", icon='FILE_REFRESH')
         #col.prop(bpy.context.scene, "base_select_length", text="Base Select Length", icon='FORCE_HARMONIC')                    
         #col.prop(bpy.context.scene, "shape_select_length", text="Shape Select Length", icon='FORCE_HARMONIC')                    
@@ -478,14 +430,12 @@ def register():
     create_properties()
     bpy.utils.register_class(Print3DTools)
     bpy.utils.register_class(ShapeFromUV)
-    bpy.utils.register_class(AutosplitGeometry)
     bpy.utils.register_class(UpdateLineLengths)
 
 def unregister():
     remove_properties()
     bpy.utils.unregister_class(Print3DTools)
     bpy.utils.unregister_class(ShapeFromUV)
-    bpy.utils.unregister_class(AutosplitGeometry)
     bpy.utils.unregister_class(UpdateLineLengths)
     
 if __name__ == "__main__":
