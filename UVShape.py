@@ -470,7 +470,7 @@ class Print3DTools(bpy.types.Panel):
         col.label(text="UV Tools")
         col.operator("object.shape_from_uv", text="Create UV Shape", icon='SHAPEKEY_DATA')
         col.operator("object.autosplit_geometry", text="Autosplit Geometry", icon='UV_ISLANDSEL')
-        col.prop(bpy.context.scene, "use_active_uv_for_shape", text="Use Active Map", icon='OUTLINER_OB_LATTICE')
+        col.prop(bpy.context.scene, "use_active_uv_for_shape", text="Use Active Map", icon='GROUP_UVS')
         col.prop(bpy.context.scene, "uv_shape_adjust_scale", text="Rescale Islands", icon='BORDERMOVE')
         
         #col.operator("object.update_line_lengths", text="Update Measurements", icon='FILE_REFRESH')
