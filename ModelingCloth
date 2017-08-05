@@ -13,6 +13,14 @@
 #  run on frame update as an option?
 #  option to cache animation?
 '''??? Would it make sense to do self collisions with virtual edges ???'''
+#To show:
+# overview of tools
+# slinky like tube with surface follow
+# bouncing cubes and cylinders
+#
+# To do list:
+
+# feature requests?
 
 bl_info = {
     "name": "Modeling Cloth",
@@ -353,7 +361,16 @@ def run_handler(cloth):
 
 
 def modeling_cloth_handler(scene):
-    for i, cloth in data.items():    
+    items = data.items()
+    if len(items) == 0:
+        for i in bpy.data.objects:
+            i.modeling_cloth = False
+        
+        for i in bpy.app.handlers.scene_update_post:
+            if i.__name__ == 'modeling_cloth_handler':
+                bpy.app.handlers.scene_update_post.remove(i)
+    
+    for i, cloth in items:    
         run_handler(cloth)
 
 
