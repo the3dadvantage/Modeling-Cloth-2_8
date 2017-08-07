@@ -13,14 +13,6 @@
 #  run on frame update as an option?
 #  option to cache animation?
 '''??? Would it make sense to do self collisions with virtual edges ???'''
-#To show:
-# overview of tools
-# slinky like tube with surface follow
-# bouncing cubes and cylinders
-#
-# To do list:
-
-# feature requests?
 
 bl_info = {
     "name": "Modeling Cloth",
@@ -329,7 +321,7 @@ def run_handler(cloth):
             np.add.at(cloth.co, l_eidx, move)    
             
             if len(cloth.pin_list) > 0:
-                hook_co = np.array([cloth.ob.matrix_world.inverted() * i.location for i in cloth.hook_list])
+                hook_co = np.array([cloth.ob.matrix_world.inverted() * i.matrix_world.to_translation() for i in cloth.hook_list])
                 cloth.co[cloth.pin_list] = hook_co
 
         vel_dif = cloth.vel_start - cloth.co
