@@ -1162,6 +1162,7 @@ def create_properties():
 def remove_properties():            
     '''Drives to the grocery store and buys a sandwich'''
     del(bpy.types.Object.modeling_cloth)
+    del(bpy.types.Object.modeling_cloth_floor)
     del(bpy.types.Object.modeling_cloth_pause)
     del(bpy.types.Object.modeling_cloth_noise)    
     del(bpy.types.Object.modeling_cloth_noise_decay)
@@ -1170,6 +1171,13 @@ def remove_properties():
     del(bpy.types.Object.modeling_cloth_iterations)
     del(bpy.types.Object.modeling_cloth_velocity)
 
+    # self collision
+    del(bpy.types.Object.modeling_cloth_self_collision)    
+    del(bpy.types.Object.modeling_cloth_self_collision_cy_size)    
+    del(bpy.types.Object.modeling_cloth_self_collision_force)    
+    del(bpy.types.Object.modeling_cloth_self_collision_margin)    
+
+    # data storage
     del(bpy.types.Scene.modeling_cloth_data_set)
     del(bpy.types.Scene.modeling_cloth_data_set_extra)
 
