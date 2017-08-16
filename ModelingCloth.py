@@ -79,7 +79,7 @@ def closest_point_edge(e1, e2, p):
 #    p_size.append(size * .7)
 
 
-def generate_collision_data(ob):
+def generate_collision_data(ob, pins):
     """The mean of each face is treated as a point then
     checked against the cpoe of the normals of every face.
     If the distance between the cpoe and the center of the face
@@ -115,6 +115,7 @@ def generate_collision_data(ob):
 
 
     obm.faces.ensure_lookup_table()
+    obm.verts.ensure_lookup_table()
     p_count = len(obm.faces)
     v_count = len(obm.verts)
     
@@ -128,8 +129,16 @@ def generate_collision_data(ob):
         sq_dist.append(np.min(np.einsum('ij,ij->i', dif, dif)))
     
     # neighbors for excluding point face collisions.
-    neighbors = np.tile(np.ones(p_count, dtype=np.bool), (v_count, 1))
-    p_neighbors = [[f.index for f in v.link_faces] for v in obm.verts]
+    neighbors = np.tile(np.ones(p_count, dtype=np.bool), (pins.shape[0], 1))
+    print(neighbors.shape, 'nei 1')
+    #neighbors = np.tile(pins, (pins.shape[0], 1))
+    print(neighbors.shape, 'nei 2')    
+    p_neighbors = [[f.index for f in obm.verts[p].link_faces] for p in pins]
+    
+    #p_neighbors = [[f.index for f in v.link_faces] for v in obm.verts]
+    
+    
+    
     #print(p_neighbors)
     for x in range(neighbors.shape[0]):
         neighbors[x][p_neighbors[x]] = False
@@ -275,7 +284,9 @@ def scale_source(multiplier):
             co *= multiplier
             co += mean
             ob.data.shape_keys.key_blocks['cloth source key'].data.foreach_set('co', co.ravel())                
-
+            data[ob.name].cy_dists *= multiplier
+            
+            
 
 def reset_shapes():
     """Sets the cloth key to match the source key.
@@ -411,23 +422,20 @@ def create_instance(new=True):
     cloth.p_means *= cloth.poly_meaner
     
     # could put in a check in case int 32 isn't big enough...
-    cloth.cy_dists, cloth.point_mean_neighbors = generate_collision_data(cloth.ob)
+    cloth.cy_dists, cloth.point_mean_neighbors = generate_collision_data(cloth.ob, pindexer)
     cloth.cy_dists *= cloth.ob.modeling_cloth_self_collision_cy_size
     
     nei = cloth.point_mean_neighbors.ravel() # eliminate neighbors for point in face check
     print('new=========================')
-    cloth.v_repeater = np.repeat(np.arange(cloth.count, dtype=np.int32), cloth.p_count)[nei]
-    #cloth.v_repeater = np.repeat(pindexer, cloth.p_count)[nei]
+    #cloth.v_repeater = np.repeat(np.arange(cloth.count, dtype=np.int32), cloth.p_count)[nei]
+    print(np.arange(cloth.count).shape)
+    print(pindexer.shape)
+    cloth.v_repeater = np.repeat(pindexer, cloth.p_count)[nei]
     cloth.p_repeater = np.tile(np.arange(cloth.p_count, dtype=np.int32),(cloth.count,))[nei]
     cloth.bool_repeater = np.ones(cloth.p_repeater.shape[0], dtype=np.bool)
-
-    
-    
     
     cloth.mean_idxer = np.arange(cloth.p_count)
     cloth.mean_tidxer = np.tile(cloth.mean_idxer, (cloth.count, 1))
-    
-
     
     #setup for normals -----
     cloth.p_normals = np.zeros(cloth.p_count * 3, dtype=np.float32) # can get from shape key
@@ -538,9 +546,9 @@ def run_handler(cloth):
         #target a mesh======================:        
 
 
-        vel_dif = cloth.vel_start - cloth.co
+        #vel_dif = cloth.vel_start - cloth.co
 
-        cloth.vel += vel_dif
+        #cloth.vel += vel_dif
         
 
         #collision=====================================
@@ -621,19 +629,28 @@ def run_handler(cloth):
                     force *= cloth.ob.modeling_cloth_self_collision_force
                     
                     cloth.co[V3] += force
+
+
+                    #cloth.vel[V3] -= force * .9                   
+                    cloth.vel[V3] *= .2                   
                     #np.add.at(cloth.co, V3, force * .5)
                     #np.multiply.at(cloth.vel, V3, 0.2)
                     
                     # could get some speed help by iterating over a dict maybe
                     #if False:    
-                    if True:    
-                        for i in range(len(P3)):
+                    #if True:    
+                        #for i in range(len(P3)):
 
                             #print(i, cloth.v_per_p[i].shape, force.shape)
                             #print(cloth.v_per_p[i], force)
-                            cloth.co[cloth.v_per_p[P3[i]]] -= force[i]
                             
-                            cloth.vel[cloth.v_per_p[P3[i]]] *= 0.2
+                            
+                            #cloth.co[cloth.v_per_p[P3[i]]] -= force[i]
+                            #cloth.vel[cloth.v_per_p[P3[i]]] -= force[i]
+                            
+                            #cloth.vel[cloth.v_per_p[P3[i]]] *= 0.2
+                            
+                            
                             #cloth.vel[cloth.v_per_p[P3[i]]] += cloth.vel[V3[i]]
                             
                             #need to transfer the velocity back and forth between hit faces.
@@ -642,9 +659,9 @@ def run_handler(cloth):
         
 
         # calc velocity
-        #vel_dif = cloth.vel_start - cloth.co
+        vel_dif = cloth.vel_start - cloth.co
 
-        #cloth.vel += vel_dif
+        cloth.vel += vel_dif
         
         ##np.multiply.at(cloth.vel, V3, 0)
 
@@ -1144,7 +1161,7 @@ def create_properties():
 
     bpy.types.Object.modeling_cloth_self_collision_force = bpy.props.FloatProperty(name="recovery force", 
         description="Self colide faces repel", 
-        default=.02, precision=4, min= -1.1, max=1.1, soft_min= 0, soft_max=1)
+        default=.17, precision=4, min= -1.1, max=1.1, soft_min= 0, soft_max=1)
 
     bpy.types.Object.modeling_cloth_self_collision_margin = bpy.props.FloatProperty(name="Margin", 
         description="Self colide faces margin", 
