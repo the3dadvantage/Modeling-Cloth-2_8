@@ -15,8 +15,14 @@
 #  run on frame update as an option?
 #  option to cache animation?
 #  collisions need to properly exclude pinned and vertex pinned
-#  When growing the source, the size of collision margins doesn's scale
+
+
+# now!!!!
 #  add inflate
+#  delete selected pins
+#  refresh self collisions.
+#  soft springs to selection (connect all points on a selected area.)
+
 
 
 '''??? Would it make sense to do self collisions with virtual edges ???'''
@@ -38,6 +44,17 @@ import bmesh
 import numpy as np
 from numpy import newaxis as nax
 from bpy_extras import view3d_utils
+from ctypes import windll, Structure, c_ulong, byref
+
+
+class POINT(Structure):
+    _fields_ = [("x", c_ulong), ("y", c_ulong)]
+
+
+def queryMousePosition():
+    pt = POINT()
+    windll.user32.GetCursorPos(byref(pt))
+    return { "x": pt.x, "y": pt.y}
 
 
 you_have_a_sense_of_humor = False
@@ -55,31 +72,7 @@ def closest_point_edge(e1, e2, p):
     return cp
 
 
-#testob = bpy.data.objects['P']
-#eidx = np.zeros(len(testob.data.edges) * 2)
-#testob.data.edges.foreach_get('vertices', eidx)
-#p_count = len(testob.data.polygons)
-#v_count = len(testob.data.vertices)
-#co = np.zeros(v_count * 3)
-#testob.data.vertices.foreach_get('co', co.ravel())
-#co.shape = (v_count, 3)
-#p_verts = [[i for i in p.vertices] for p in testob.data.polygons]
-#centers = [np.mean(co[p_verts[i]], axis = 0) for i in range(p_count)]
-#p_size = []
-
-#for i in range(p_count):
-#    vecs = co[p_verts[i]] - co[np.roll(p_verts[i], 1)]
-#    vp_count = len(p_verts[i])
-#    ccp = []
-#    for c in range(vp_count):
-#        cp = closest_point_edge(co[p_verts[i][c]], co[np.roll(p_verts[i], 1)[c]], centers[i])
-#        ccp.append(cp)
-#    dif = centers[i] - ccp
-#    size = np.min(np.sqrt((np.einsum('ij,ij->i', dif, dif))))
-#    p_size.append(size * .7)
-
-
-def generate_collision_data(ob, pins):
+def generate_collision_data(ob, pins, means):
     """The mean of each face is treated as a point then
     checked against the cpoe of the normals of every face.
     If the distance between the cpoe and the center of the face
@@ -100,7 +93,6 @@ def generate_collision_data(ob, pins):
     it like a cylinder so instead of all the inside triangle stuff, just check
     the distance from the intersection to the cpoe of the normal
     
-        
     Get cylinder sizes by taking the center of each face,
     and measuring the distance to it's closest neighbor, then back up a bit
     
@@ -109,19 +101,23 @@ def generate_collision_data(ob, pins):
     """
     
     # one issue: oddly shaped triangles can cause gaps where face centers could pass through
-    # since both sids are being check it's unlikely that both sides could ever line up and pass through the gap
+    # since both sids are being checked it's less likely that both sides line up and pass through the gap
     obm = bmesh.new()
     obm.from_mesh(ob.data)
-
 
     obm.faces.ensure_lookup_table()
     obm.verts.ensure_lookup_table()
     p_count = len(obm.faces)
-    v_count = len(obm.verts)
     
     per_face_v =  [[v.co for v in f.verts] for f in obm.faces]
-    means = np.array([np.mean([v.co for v in f.verts], axis=0) for f in obm.faces], dtype=np.float32)
     
+    # $$$$$ calculate means with add.at like it's set up already$$$$$
+    #means = np.array([np.mean([v.co for v in f.verts], axis=0) for f in obm.faces], dtype=np.float32)
+    ### !!! calculating means from below wich is dynamic. Might be better since faces change size anyway. Could get better collisions
+    
+    
+    #print(means)
+    #print(p_means)
     # get sqared distance to closest vert in each face. (this will still work if the mesh isn't flat)
     sq_dist = []
     for i in range(p_count):
@@ -130,28 +126,10 @@ def generate_collision_data(ob, pins):
     
     # neighbors for excluding point face collisions.
     neighbors = np.tile(np.ones(p_count, dtype=np.bool), (pins.shape[0], 1))
-    print(neighbors.shape, 'nei 1')
     #neighbors = np.tile(pins, (pins.shape[0], 1))
-    print(neighbors.shape, 'nei 2')    
     p_neighbors = [[f.index for f in obm.verts[p].link_faces] for p in pins]
-    
-    #p_neighbors = [[f.index for f in v.link_faces] for v in obm.verts]
-    
-    
-    
-    #print(p_neighbors)
     for x in range(neighbors.shape[0]):
         neighbors[x][p_neighbors[x]] = False
-
-    #count = 0
-    #for x in np.nditer(neighbors, flags=['external_loop', 'buffered'], op_flags=['readwrite']):
-        #count += 1
-        #print(count)
-    #for i in range(len(neighbors)):
-    
-    
-        
-    #print(neighbors)
 
     # returns the radius distance from the mean to the closest vert in the polygon
     return np.array(np.sqrt(sq_dist), dtype=np.float32), neighbors
@@ -202,12 +180,74 @@ def connected_by_polygons():
     obm = get_bmesh()
     obm.verts.ensure_lookup_table()
     virtual_edges = []
+
     for v in obm.verts:
         lv = np.hstack([[fv.index for fv in f.verts if fv != v] for f in v.link_faces])
         for i in np.unique(lv):
             virtual_edges.append([v.index, i])
-    
     return np.array(virtual_edges, dtype=np.int32) # note there are many duplicates: [0,72], [72,0]
+
+
+def add_virtual_springs(remove=False):
+    cloth = data[get_last_object()[1].name]
+    obm = get_bmesh()
+    obm.verts.ensure_lookup_table()
+    count = len(obm.verts)
+    idxer = np.arange(count)
+    sel = np.array([v.select for v in obm.verts])    
+    selected = idxer[sel]
+
+    if remove:
+        ls = cloth.virtual_springs[:, 0]
+        
+        in_sel = np.in1d(ls, idxer[sel])
+
+        deleter = np.arange(ls.shape[0])[in_sel]
+        print(cloth.virtual_springs)
+        reduce = np.delete(cloth.virtual_springs, deleter, axis=0)
+        print(reduce, 'this is reduce')
+        cloth.virtual_springs = reduce
+        #reduce = np.delete(cloth.virtual_springs, np.arange(ls.shape[0])[np.in1d(ls, idxer[sel])], axis=0)
+        
+        #cloth.virtual_springs = reduce
+        
+        #print(reduce)
+        
+        
+        if cloth.virtual_springs.shape[0] == 0:
+            cloth.virtual_springs.shape = (0, 2)
+
+        return
+
+
+
+    print(cloth.virtual_springs.shape)
+
+    existing = np.append(cloth.eidx, cloth.virtual_springs, axis=0)
+    ls = existing[:,0]
+    springs = []
+    print('new=====================')
+    for i in idxer[sel]:
+
+        # to avoid duplicates:
+        # !!!!!! can use this exact same code to eliminate duplicates in the edge calcs
+        # where this vert occurs on the left side of the existing spring list
+        v_in = existing[i == ls]
+        v_in_r = v_in[:,1]
+        not_in = selected[-np.in1d(selected, v_in_r)]
+        idx_set = not_in[not_in != i]
+        for sv in idx_set:
+            springs.append([i, sv])
+    virtual_springs = np.array(springs, dtype=np.int32)
+    
+    if virtual_springs.shape[0] == 0:
+        virtual_springs.shape = (0, 2)
+    
+    cloth.virtual_springs = np.append(cloth.virtual_springs, virtual_springs, axis=0)
+    # gets appended to eidx in the cloth_init function after calling get connected polys in case geometry changes
+    
+    #cloth.eidx = np.append(cloth.eidx, virtual_springs, axis=0)
+    #return np.array(virtual_edges, dtype=np.int32) # note there are many duplicates: [0,72], [72,0]
 
 
 def get_last_object():
@@ -267,7 +307,9 @@ def delete_giude():
     if 'ModelingClothPinGuide' in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects['ModelingClothPinGuide'])
     if 'ModelingClothPinGuide' in bpy.data.meshes:        
-        bpy.data.meshes.remove(bpy.data.meshes['ModelingClothPinGuide'])
+        guide_mesh = bpy.data.meshes['ModelingClothPinGuide']
+        guide_mesh.user_clear()
+        bpy.data.meshes.remove(guide_mesh)
     
 
 def scale_source(multiplier):
@@ -284,8 +326,9 @@ def scale_source(multiplier):
             co *= multiplier
             co += mean
             ob.data.shape_keys.key_blocks['cloth source key'].data.foreach_set('co', co.ravel())                
-            data[ob.name].cy_dists *= multiplier
-            
+            if hasattr(data[ob.name], 'cy_dists'):
+                print('scaled cylinders')
+                data[ob.name].cy_dists *= multiplier
             
 
 def reset_shapes():
@@ -321,6 +364,11 @@ def update_pin_group():
     create_instance(new=False)
 
 
+def collision_data_update(self, context):
+    if self.modeling_cloth_self_collision:    
+        create_instance(new=False)    
+
+
 def refresh_noise(self, context):
     if self.name in data:
         zeros = np.zeros(data[self.name].count, dtype=np.float32)
@@ -337,6 +385,11 @@ def create_instance(new=True):
     if new:    
         cloth = Cloth()
         cloth.ob = bpy.context.object
+
+        cloth.pin_list = []
+        cloth.hook_list = []
+        cloth.virtual_springs = np.empty((0,2), dtype=np.int32)
+        cloth.sew_springs = []
     
     else:
         ob = get_last_object()[1]
@@ -346,7 +399,7 @@ def create_instance(new=True):
     mode = cloth.ob.mode
     if mode == 'EDIT':
         bpy.ops.object.mode_set(mode='OBJECT')
-    
+        
     cloth.name = cloth.ob.name
     if cloth.ob.data.shape_keys == None:
         cloth.ob.shape_key_add('Basis')    
@@ -368,7 +421,11 @@ def create_instance(new=True):
     cloth.pin_bool = -np.array([cloth.ob.vertex_groups['modeling_cloth_pin'].weight(i) for i in range(cloth.count)], dtype=np.bool)
 
     cloth.eidx = connected_by_polygons()
-    eidx1 = connected_by_polygons()
+    if cloth.virtual_springs.shape[0] > 0:
+        cloth.eidx = np.append(cloth.eidx, cloth.virtual_springs, axis=0)
+    
+    
+    eidx1 = np.copy(cloth.eidx)
     pindexer = np.arange(cloth.count, dtype=np.int32)[cloth.pin_bool]
     unpinned = np.in1d(eidx1[:, 0], pindexer)
     cloth.eidx = eidx1[unpinned]    
@@ -400,76 +457,75 @@ def create_instance(new=True):
     cloth.mix = (1/cloth.l[2][cloth.l[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
     cloth.l_eidx = cloth.eidx[:, 0]
 
-    if new:
-        cloth.pin_list = []
-        cloth.hook_list = []
-    
-    # collision======:
-    # collision======:
+    self_col = cloth.ob.modeling_cloth_self_collision
+    if self_col:
+        # collision======:
+        # collision======:
 
-    #setup for means with random numbers of v_counts in faces:-----
-    cloth.p_count = len(cloth.ob.data.polygons)
-    cloth.v_per_f = [[i for i in p.vertices] for p in cloth.ob.data.polygons]
-    cloth.v_per_p = np.copy([[i for i in p.vertices] for p in cloth.ob.data.polygons])
-    
-    cloth.p_means_add_tiler = np.hstack(cloth.v_per_f)
-    cloth.p_means = np.zeros(cloth.p_count * 3, dtype=np.float32)
-    cloth.p_means.shape = (cloth.p_count, 3)
-    cloth.v_count_per_f = np.array([len(p.vertices) for p in cloth.ob.data.polygons])
-    cloth.tiler = np.hstack([[i for j in range(cloth.v_count_per_f[i])] for i in range(len(cloth.v_count_per_f))])
-    cloth.poly_meaner = (1/cloth.v_count_per_f)[:, nax].astype(np.float32)
-    np.add.at(cloth.p_means, cloth.tiler, cloth.co[cloth.p_means_add_tiler])
-    cloth.p_means *= cloth.poly_meaner
-    
-    # could put in a check in case int 32 isn't big enough...
-    cloth.cy_dists, cloth.point_mean_neighbors = generate_collision_data(cloth.ob, pindexer)
-    cloth.cy_dists *= cloth.ob.modeling_cloth_self_collision_cy_size
-    
-    nei = cloth.point_mean_neighbors.ravel() # eliminate neighbors for point in face check
-    print('new=========================')
-    #cloth.v_repeater = np.repeat(np.arange(cloth.count, dtype=np.int32), cloth.p_count)[nei]
-    print(np.arange(cloth.count).shape)
-    print(pindexer.shape)
-    cloth.v_repeater = np.repeat(pindexer, cloth.p_count)[nei]
-    cloth.p_repeater = np.tile(np.arange(cloth.p_count, dtype=np.int32),(cloth.count,))[nei]
-    cloth.bool_repeater = np.ones(cloth.p_repeater.shape[0], dtype=np.bool)
-    
-    cloth.mean_idxer = np.arange(cloth.p_count)
-    cloth.mean_tidxer = np.tile(cloth.mean_idxer, (cloth.count, 1))
-    
-    #setup for normals -----
-    cloth.p_normals = np.zeros(cloth.p_count * 3, dtype=np.float32) # can get from shape key
-    normals_idx = []
-    for i in range(cloth.p_count):
-        vecs = cloth.p_means[i] - cloth.co[cloth.v_per_f[i]]
-        p1 = cloth.v_per_f[i][np.argmax(np.einsum('ij,ij->i', vecs, vecs))]
-        cloth.v_per_f[i].remove(p1)
-        vecs2 = co[p1] - cloth.co[cloth.v_per_f[i]]
-        p2 = cloth.v_per_f[i][np.argmax(np.einsum('ij,ij->i', vecs2, vecs2))]
-        e_mean = np.mean(co[[p1, p2]], axis=0)
+        #setup for means with random numbers of v_counts in faces:-----
+        cloth.p_count = len(cloth.ob.data.polygons)
+        cloth.v_per_f = [[i for i in p.vertices] for p in cloth.ob.data.polygons]
+        #cloth.v_per_p = np.copy([[i for i in p.vertices] for p in cloth.ob.data.polygons])
         
+        cloth.p_means_add_tiler = np.hstack(cloth.v_per_f)
+        cloth.p_means = np.zeros(cloth.p_count * 3, dtype=np.float32)
+        cloth.p_means.shape = (cloth.p_count, 3)
+        cloth.v_count_per_f = np.array([len(p.vertices) for p in cloth.ob.data.polygons])
         
-        vecs3 = e_mean - cloth.co[cloth.v_per_f[i]]
-        p3 = cloth.v_per_f[i][np.argmin(np.abs(np.einsum('j,ij->i', co[p1] - co[p2], vecs3)))]
-        normals_idx.append([p1, p2, p3])
-    
-    cloth.normals_idx = np.array(normals_idx)
-    cloth.norm_base = cloth.normals_idx[:,2]
-    cloth.norm_pairs = cloth.normals_idx[:,:2]
-    
-    # I'm checking the centers against the other face centers so I guess I need
-    #   the face means every frame.
-    
-    # I'll need to get the object transforms if I check for collisions on other objects
+        cloth.tiler = np.hstack([[i for j in range(cloth.v_count_per_f[i])] for i in range(len(cloth.v_count_per_f))])
+        cloth.poly_meaner = (1/cloth.v_count_per_f)[:, nax].astype(np.float32)
+        np.add.at(cloth.p_means, cloth.tiler, cloth.sco[cloth.p_means_add_tiler])
+        cloth.p_means *= cloth.poly_meaner
+        
+        # could put in a check in case int 32 isn't big enough...
+        cloth.cy_dists, cloth.point_mean_neighbors = generate_collision_data(cloth.ob, pindexer, cloth.p_means)
+        cloth.cy_dists *= cloth.ob.modeling_cloth_self_collision_cy_size
+        
+        nei = cloth.point_mean_neighbors.ravel() # eliminate neighbors for point in face check
+        print('new=========================')
+        #cloth.v_repeater = np.repeat(np.arange(cloth.count, dtype=np.int32), cloth.p_count)[nei]
+        print(np.arange(cloth.count).shape)
+        print(pindexer.shape)
+        cloth.v_repeater = np.repeat(pindexer, cloth.p_count)[nei]
+        cloth.p_repeater = np.tile(np.arange(cloth.p_count, dtype=np.int32),(cloth.count,))[nei]
+        cloth.bool_repeater = np.ones(cloth.p_repeater.shape[0], dtype=np.bool)
+        
+        cloth.mean_idxer = np.arange(cloth.p_count)
+        cloth.mean_tidxer = np.tile(cloth.mean_idxer, (cloth.count, 1))
+        
+        #setup for normals -----
+        cloth.p_normals = np.zeros(cloth.p_count * 3, dtype=np.float32) # can get from shape key
+        normals_idx = []
+        for i in range(cloth.p_count):
+            vecs = cloth.p_means[i] - cloth.sco[cloth.v_per_f[i]]
+            p1 = cloth.v_per_f[i][np.argmax(np.einsum('ij,ij->i', vecs, vecs))]
+            cloth.v_per_f[i].remove(p1)
+            vecs2 = co[p1] - cloth.sco[cloth.v_per_f[i]]
+            p2 = cloth.v_per_f[i][np.argmax(np.einsum('ij,ij->i', vecs2, vecs2))]
+            e_mean = np.mean(co[[p1, p2]], axis=0)
+            
+            
+            vecs3 = e_mean - cloth.sco[cloth.v_per_f[i]]
+            p3 = cloth.v_per_f[i][np.argmin(np.abs(np.einsum('j,ij->i', co[p1] - co[p2], vecs3)))]
+            normals_idx.append([p1, p2, p3])
+        
+        cloth.normals_idx = np.array(normals_idx)
+        cloth.norm_base = cloth.normals_idx[:,2]
+        cloth.norm_pairs = cloth.normals_idx[:,:2]
+        
+        # I'm checking the centers against the other face centers so I guess I need
+        #   the face means every frame.
+        
+        # I'll need to get the object transforms if I check for collisions on other objects
 
 
 
-    #ees = [i for i in bpy.data.objects if i.name.startswith('ee')]
-    #for i in range(len(cloth.center_vel_start)):
-        #ees[i].location = cloth.center_vel_start[i]
+        #ees = [i for i in bpy.data.objects if i.name.startswith('ee')]
+        #for i in range(len(cloth.center_vel_start)):
+            #ees[i].location = cloth.center_vel_start[i]
 
-    # collision======:
-    # collision======:
+        # collision======:
+        # collision======:
 
     
     bpy.ops.object.mode_set(mode=mode)
@@ -483,209 +539,208 @@ def run_handler(cloth):
         if cloth.waiting:    
             if cloth.ob.mode == 'OBJECT':
                 update_pin_group()
-        
-        eidx = cloth.eidx
-        l_eidx = cloth.l_eidx
-        # can get a speedup here by indexing the edges and flipping instead of doing
-        #   calculations on the tiled edges. (tile after doing math)
-        cloth.ob.data.shape_keys.key_blocks['cloth source key'].data.foreach_get('co', cloth.sco.ravel())
-        sco = cloth.sco
-        sco.shape = (cloth.count, 3)
-        cloth.ob.data.shape_keys.key_blocks['cloth key'].data.foreach_get('co', cloth.co.ravel())
-        co = cloth.co
-        co.shape = (cloth.count, 3)
+        if not cloth.waiting:
+            eidx = cloth.eidx
+            l_eidx = cloth.l_eidx
+            # can get a speedup here by indexing the edges and flipping instead of doing
+            #   calculations on the tiled edges. (tile after doing math)
+            cloth.ob.data.shape_keys.key_blocks['cloth source key'].data.foreach_get('co', cloth.sco.ravel())
+            sco = cloth.sco
+            sco.shape = (cloth.count, 3)
+            cloth.ob.data.shape_keys.key_blocks['cloth key'].data.foreach_get('co', cloth.co.ravel())
+            co = cloth.co
+            co.shape = (cloth.count, 3)
 
-        svecs = sco[eidx[:, 1]] - sco[eidx[:, 0]]
-        sdots = np.einsum('ij,ij->i', svecs, svecs)
+            svecs = sco[eidx[:, 1]] - sco[eidx[:, 0]]
+            sdots = np.einsum('ij,ij->i', svecs, svecs)
 
-        co[cloth.pindexer] += cloth.noise[cloth.pindexer]
-        cloth.noise *= cloth.ob.modeling_cloth_noise_decay
-        #co[cloth.pindexer] -= cloth.vel[cloth.pindexer] 
-        cloth.vel_start[:] = co
-        force = cloth.ob.modeling_cloth_spring_force
-        mix = cloth.mix * force
-        for x in range(cloth.ob.modeling_cloth_iterations):    
-            if force < 0.17:
-                force += .01
+            co[cloth.pindexer] += cloth.noise[cloth.pindexer]
+            cloth.noise *= cloth.ob.modeling_cloth_noise_decay
+            #co[cloth.pindexer] -= cloth.vel[cloth.pindexer] 
+            cloth.vel_start[:] = co
+            force = cloth.ob.modeling_cloth_spring_force
+            mix = cloth.mix * force
+            for x in range(cloth.ob.modeling_cloth_iterations):    
+                if force < 0.17:
+                    force += .01
 
-            vecs = co[eidx[:, 1]] - co[eidx[:, 0]]
-            dots = np.einsum('ij,ij->i', vecs, vecs)
-            div = np.nan_to_num(sdots / dots)
-            swap = vecs * np.sqrt(div)[:, nax]
-            move = vecs - swap
+                vecs = co[eidx[:, 1]] - co[eidx[:, 0]]
+                dots = np.einsum('ij,ij->i', vecs, vecs)
+                div = np.nan_to_num(sdots / dots)
+                swap = vecs * np.sqrt(div)[:, nax]
+                move = vecs - swap
 
-            #---
-            move *= mix # for stability: force multiplied by 1/number of springs
-            #---
+                #---
+                move *= mix # for stability: force multiplied by 1/number of springs
+                #---
+                
+                np.add.at(cloth.co, l_eidx, move)    
+                
+                if len(cloth.pin_list) > 0:
+                    hook_co = np.array([cloth.ob.matrix_world.inverted() * i.matrix_world.to_translation() for i in cloth.hook_list])
+                    cloth.co[cloth.pin_list] = hook_co
+
+
+
+            # floor ---
+            if cloth.ob.modeling_cloth_floor:    
+                floored = cloth.co[:,2] < 0        
+                cloth.vel[:,2][floored] *= -1
+                cloth.vel[floored] *= .1
+                cloth.co[:, 2][floored] = 0
+            # floor ---
+
+            #target a mesh======================:
+            #target a mesh======================:
+                
+                #use the v_normal drop or possible a ne closest point on mesh method
+                #   as a force to move the cloth towards another object using a distance off
+                #   the mesh as a target.
             
-            np.add.at(cloth.co, l_eidx, move)    
             
+            #target a mesh======================:
+            #target a mesh======================:        
+
+
+            #vel_dif = cloth.vel_start - cloth.co
+
+            #cloth.vel += vel_dif
+            
+
+            #collision=====================================
+            #collision=====================================
+            # for grow and shrink, the distance will need to change
+            #   it gets recaluclated when going in and out of edit mode already...
+            #self_collision = False
+            self_col = cloth.ob.modeling_cloth_self_collision
+
+            if self_col:
+                V3 = [] # because I'm multiplying the vel by this value and it doesn't exist unless there are collisions
+                col_margin = cloth.ob.modeling_cloth_self_collision_margin
+                sq_margin = col_margin ** 2
+                
+                # use add.at to get the means of randomly sided polygons    
+                cloth.p_means *= 0
+                np.add.at(cloth.p_means, cloth.tiler, cloth.co[cloth.p_means_add_tiler])
+                cloth.p_means *= cloth.poly_meaner            
+                
+                #======== collision tree---
+                # start with the greatest dimension(if it's flat on the z axis, it will return everything so start with an axis with the greatest dimensions)
+                order = np.argsort(cloth.ob.dimensions) # last on first since it goes from smallest to largest
+                axis_1 = cloth.co[:, order[2]]
+                axis_2 = cloth.co[:, order[1]]
+                axis_3 = cloth.co[:, order[0]]
+                center_1 = cloth.p_means[:, order[2]]
+                center_2 = cloth.p_means[:, order[1]]
+                center_3 = cloth.p_means[:, order[0]]
+                
+                V = cloth.v_repeater # one set of verts for each face
+                P = cloth.p_repeater # faces repeated in order to aling to v_repearter
+                
+                check_1 = np.abs(axis_1[V] - center_1[P]) < cloth.cy_dists[P]
+                V1 = V[check_1]
+                P1 = P[check_1]
+                C1 = cloth.cy_dists[P1]
+                
+                check_2 = np.abs(axis_2[V1] - center_2[P1]) < C1
+                
+                V2 = V1[check_2]
+                P2 = P1[check_2]
+                C2 = C1[P2]            
+
+                check_3 = np.abs(axis_3[V2] - center_3[P2]) < C2
+
+                v_hits = V2[check_3]
+                p_hits = P2[check_3]
+                #======== collision tree end ---
+                if p_hits.shape[0] > 0:        
+                # normals:
+                    # could use np.unique to only do normals once then index them with the return index thingy from unique
+
+                    # now do closest point edge with points on normals
+                    nor_vecs = cloth.co[cloth.norm_pairs[p_hits]] - cloth.co[cloth.norm_base[p_hits]][:, nax]
+                    normals = np.cross(nor_vecs[:,0], nor_vecs[:,1])
+                    
+                    base_vecs = cloth.co[v_hits] - cloth.p_means[p_hits]
+                    d = np.einsum('ij,ij->i', base_vecs, normals) / np.einsum('ij,ij->i', normals, normals)        
+                    cp = normals * d[:, nax]
+                    
+                    # now measure the distance along the normal to see if it's in the cylinder
+                    
+                    cp_dot = np.einsum('ij,ij->i', cp, cp)
+                    in_margin = cp_dot < sq_margin
+                    
+                    if in_margin.shape[0] > 0:
+                        V3 = v_hits[in_margin]
+                        #P3 = p_hits[in_margin]
+                        cp3 = cp[in_margin]
+                        cpd3 = cp_dot[in_margin]
+                        
+                        d1 = sq_margin
+                        d2 = cpd3
+                        div = d1/d2
+                        surface = cp3 * np.sqrt(div)[:, nax]
+
+                        force = np.nan_to_num(surface - cp3)
+                        force *= cloth.ob.modeling_cloth_self_collision_force
+                        
+                        cloth.co[V3] += force
+
+
+                        #cloth.vel[V3] -= force * .9                   
+                        cloth.vel[V3] *= .2                   
+                        #np.add.at(cloth.co, V3, force * .5)
+                        #np.multiply.at(cloth.vel, V3, 0.2)
+                        
+                        # could get some speed help by iterating over a dict maybe
+                        #if False:    
+                        #if True:    
+                            #for i in range(len(P3)):
+
+                                #print(i, cloth.v_per_p[i].shape, force.shape)
+                                #print(cloth.v_per_p[i], force)
+                                
+                                
+                                #cloth.co[cloth.v_per_p[P3[i]]] -= force[i]
+                                #cloth.vel[cloth.v_per_p[P3[i]]] -= force[i]
+                                
+                                #cloth.vel[cloth.v_per_p[P3[i]]] *= 0.2
+                                
+                                
+                                #cloth.vel[cloth.v_per_p[P3[i]]] += cloth.vel[V3[i]]
+                                
+                                #need to transfer the velocity back and forth between hit faces.
+
+            #collision=====================================
+            
+
+            # calc velocity
+            vel_dif = cloth.vel_start - cloth.co
+
+            cloth.vel += vel_dif
+            
+            ##np.multiply.at(cloth.vel, V3, 0)
+            
+            
+            cloth.vel[:,2][cloth.pindexer] -= cloth.ob.modeling_cloth_gravity * .01
+            
+            cloth.vel *= cloth.ob.modeling_cloth_velocity
+            co[cloth.pindexer] -= cloth.vel[cloth.pindexer]        
+
+
             if len(cloth.pin_list) > 0:
-                hook_co = np.array([cloth.ob.matrix_world.inverted() * i.matrix_world.to_translation() for i in cloth.hook_list])
                 cloth.co[cloth.pin_list] = hook_co
-
-
-
-        # floor ---
-        if cloth.ob.modeling_cloth_floor:    
-            floored = cloth.co[:,2] < 0        
-            cloth.vel[:,2][floored] *= -1
-            cloth.vel[floored] *= .1
-            cloth.co[:, 2][floored] = 0
-        # floor ---
-
-        #target a mesh======================:
-        #target a mesh======================:
+                cloth.vel[cloth.pin_list] = 0
             
-            #use the v_normal drop or possible a ne closest point on mesh method
-            #   as a force to move the cloth towards another object using a distance off
-            #   the mesh as a target.
-        
-        
-        #target a mesh======================:
-        #target a mesh======================:        
+            if cloth.clicked: # for the grab tool
+                for v in range(len(extra_data['vidx'])):   
+                    loc = extra_data['stored_vidx'][v] + extra_data['move']
+                    cloth.co[extra_data['vidx'][v]] = loc            
+                    cloth.vel[extra_data['vidx'][v]] *= 0
 
-
-        #vel_dif = cloth.vel_start - cloth.co
-
-        #cloth.vel += vel_dif
-        
-
-        #collision=====================================
-        #collision=====================================
-        # for grow and shrink, the distance will need to change
-        #   it gets recaluclated when going in and out of edit mode already...
-        #self_collision = False
-        self_col = cloth.ob.modeling_cloth_self_collision
-
-        if self_col:
-            V3 = [] # because I'm multiplying the vel by this value and it doesn't exist unless there are collisions
-            col_margin = cloth.ob.modeling_cloth_self_collision_margin
-            sq_margin = col_margin ** 2
-            
-            # use add.at to get the means of randomly sided polygons    
-            cloth.p_means *= 0
-            np.add.at(cloth.p_means, cloth.tiler, cloth.co[cloth.p_means_add_tiler])
-            cloth.p_means *= cloth.poly_meaner            
-            
-            #======== collision tree---
-            # start with the greatest dimension(if it's flat on the z axis, it will return everything so start with an axis with the greatest dimensions)
-            order = np.argsort(cloth.ob.dimensions) # last on first since it goes from smallest to largest
-            axis_1 = cloth.co[:, order[2]]
-            axis_2 = cloth.co[:, order[1]]
-            axis_3 = cloth.co[:, order[0]]
-            center_1 = cloth.p_means[:, order[2]]
-            center_2 = cloth.p_means[:, order[1]]
-            center_3 = cloth.p_means[:, order[0]]
-            
-            V = cloth.v_repeater # one set of verts for each face
-            P = cloth.p_repeater # faces repeated in order to aling to v_repearter
-            
-            check_1 = np.abs(axis_1[V] - center_1[P]) < cloth.cy_dists[P]
-            V1 = V[check_1]
-            P1 = P[check_1]
-            C1 = cloth.cy_dists[P1]
-            
-            check_2 = np.abs(axis_2[V1] - center_2[P1]) < C1
-            
-            V2 = V1[check_2]
-            P2 = P1[check_2]
-            C2 = C1[P2]            
-
-            check_3 = np.abs(axis_3[V2] - center_3[P2]) < C2
-
-            v_hits = V2[check_3]
-            p_hits = P2[check_3]
-            #======== collision tree end ---
-            if p_hits.shape[0] > 0:        
-            # normals:
-                # could use np.unique to only do normals once then index them with the return index thingy from unique
-
-                # now do closest point edge with points on normals
-                nor_vecs = cloth.co[cloth.norm_pairs[p_hits]] - cloth.co[cloth.norm_base[p_hits]][:, nax]
-                normals = np.cross(nor_vecs[:,0], nor_vecs[:,1])
-                
-                base_vecs = cloth.co[v_hits] - cloth.p_means[p_hits]
-                d = np.einsum('ij,ij->i', base_vecs, normals) / np.einsum('ij,ij->i', normals, normals)        
-                cp = normals * d[:, nax]
-                
-                # now measure the distance along the normal to see if it's in the cylinder
-                
-                cp_dot = np.einsum('ij,ij->i', cp, cp)
-                in_margin = cp_dot < sq_margin
-                
-                if in_margin.shape[0] > 0:
-                    V3 = v_hits[in_margin]
-                    P3 = p_hits[in_margin]
-                    cp3 = cp[in_margin]
-                    cpd3 = cp_dot[in_margin]
-                    
-                    d1 = sq_margin
-                    d2 = cpd3
-                    div = d1/d2
-                    surface = cp3 * np.sqrt(div)[:, nax]
-
-                    force = np.nan_to_num(surface - cp3)
-                    force *= cloth.ob.modeling_cloth_self_collision_force
-                    
-                    cloth.co[V3] += force
-
-
-                    #cloth.vel[V3] -= force * .9                   
-                    cloth.vel[V3] *= .2                   
-                    #np.add.at(cloth.co, V3, force * .5)
-                    #np.multiply.at(cloth.vel, V3, 0.2)
-                    
-                    # could get some speed help by iterating over a dict maybe
-                    #if False:    
-                    #if True:    
-                        #for i in range(len(P3)):
-
-                            #print(i, cloth.v_per_p[i].shape, force.shape)
-                            #print(cloth.v_per_p[i], force)
-                            
-                            
-                            #cloth.co[cloth.v_per_p[P3[i]]] -= force[i]
-                            #cloth.vel[cloth.v_per_p[P3[i]]] -= force[i]
-                            
-                            #cloth.vel[cloth.v_per_p[P3[i]]] *= 0.2
-                            
-                            
-                            #cloth.vel[cloth.v_per_p[P3[i]]] += cloth.vel[V3[i]]
-                            
-                            #need to transfer the velocity back and forth between hit faces.
-
-        #collision=====================================
-        
-
-        # calc velocity
-        vel_dif = cloth.vel_start - cloth.co
-
-        cloth.vel += vel_dif
-        
-        ##np.multiply.at(cloth.vel, V3, 0)
-
-        
-        cloth.vel[:,2][cloth.pindexer] -= cloth.ob.modeling_cloth_gravity * .01
-        
-        cloth.vel *= cloth.ob.modeling_cloth_velocity
-        co[cloth.pindexer] -= cloth.vel[cloth.pindexer]        
-
-
-        if len(cloth.pin_list) > 0:
-            cloth.co[cloth.pin_list] = hook_co
-            cloth.vel[cloth.pin_list] = 0
-        
-        if cloth.clicked: # for the grab tool
-            for v in range(len(extra_data['vidx'])):   
-                vert = cloth.ob.data.shape_keys.key_blocks['cloth key'].data
-                loc = extra_data['stored_vidx'][v] + extra_data['move']
-                cloth.co[extra_data['vidx'][v]] = loc            
-                cloth.vel[extra_data['vidx'][v]] *= 0
-
-        cloth.ob.data.shape_keys.key_blocks['cloth key'].data.foreach_set('co', cloth.co.ravel())
-        cloth.ob.data.shape_keys.key_blocks['cloth key'].mute = True
-        cloth.ob.data.shape_keys.key_blocks['cloth key'].mute = False
+            cloth.ob.data.shape_keys.key_blocks['cloth key'].data.foreach_set('co', cloth.co.ravel())
+            cloth.ob.data.shape_keys.key_blocks['cloth key'].mute = True
+            cloth.ob.data.shape_keys.key_blocks['cloth key'].mute = False
 
 
 def modeling_cloth_handler(scene):
@@ -703,7 +758,8 @@ def modeling_cloth_handler(scene):
 
 
 def pause_update(self, context):
-    update_pin_group()
+    if not self.modeling_cloth_pause:
+        update_pin_group()
 
 
 def init_cloth(self, context):
@@ -738,16 +794,37 @@ def init_cloth(self, context):
 
 def main(context, event):
     """Raycaster for placing pins"""
-    scene = context.scene
-    region = context.region
-    rv3d = context.region_data
-    coord = event.mouse_region_x, event.mouse_region_y
-    guide = create_giude()
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for reg in area.regions:
+                if reg.type == 'WINDOW':
+                    region = reg
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    if hasattr(space, 'region_3d'):
+                        rv3d = space.region_3d
+    
+    user32 = windll.user32
+    screensize = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+    
+    X= region.x
+    Y= region.y
+    top = screensize[1]
 
+    win_x = bpy.context.window_manager.windows[0].x
+    win_y = bpy.context.window_manager.windows[0].y
+
+    flipped = top - (event['y'] + Y + win_y)
+    
+    coord = (event['x'] - win_x - X, flipped)
+
+    view3d_utils.region_2d_to_location_3d
+    
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
     ray_target = ray_origin + view_vector
+    
+    guide = create_giude()
 
     def visible_objects_and_duplis():
         """Loop over (object, matrix) pairs (mesh only)"""
@@ -799,7 +876,6 @@ def main(context, event):
                     extra_data['just_clicked'] = False
                     best_length_squared = length_squared
                     best_obj = obj
-                    name = obj.name
                    
 
 class ModelingClothPin(bpy.types.Operator):
@@ -812,11 +888,14 @@ class ModelingClothPin(bpy.types.Operator):
         
     def modal(self, context, event):
         bpy.context.window.cursor_set("CROSSHAIR")
-        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'NUMPAD_0',
+        'NUMPAD_PERIOD','NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4',
+         'NUMPAD_5', 'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9'}:
             # allow navigation
             return {'PASS_THROUGH'}
         elif event.type == 'MOUSEMOVE':
-            main(context, event)
+            pos = queryMousePosition()
+            main(context, pos)
             return {'RUNNING_MODAL'}
         elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if extra_data['latest_hit'] is not None:
@@ -870,14 +949,34 @@ class ModelingClothPin(bpy.types.Operator):
 
 def main_drag(context, event):
     """Raycaster for dragging"""
-    scene = context.scene
-    region = context.region
-    rv3d = context.region_data
-    coord = event.mouse_region_x, event.mouse_region_y
+    for area in bpy.context.screen.areas:
+        if area.type == 'VIEW_3D':
+            for reg in area.regions:
+                if reg.type == 'WINDOW':
+                    region = reg
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    if hasattr(space, 'region_3d'):
+                        rv3d = space.region_3d
+    
+    user32 = windll.user32
+    screensize = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+    
+    X= region.x
+    Y= region.y
+    top = screensize[1]
 
+    win_x = bpy.context.window_manager.windows[0].x
+    win_y = bpy.context.window_manager.windows[0].y
+
+    flipped = top - (event['y'] + Y + win_y)
+    
+    coord = (event['x'] - win_x - X, flipped)
+
+    view3d_utils.region_2d_to_location_3d
+    
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
     ray_target = ray_origin + view_vector
 
     def visible_objects_and_duplis():
@@ -922,7 +1021,6 @@ def main_drag(context, event):
                 best_length_squared = length_squared
                 best_obj = obj
                 vidx = [v for v in obj.data.polygons[face_index].vertices]
-                verts = np.array([matrix * obj.data.shape_keys.key_blocks['cloth key'].data[v].co for v in obj.data.polygons[face_index].vertices])                
                 vert = obj.data.shape_keys.key_blocks['cloth key'].data
             if best_obj is not None:    
 
@@ -962,7 +1060,8 @@ class ModelingClothDrag(bpy.types.Operator):
             # allow navigation
             return {'PASS_THROUGH'}
         elif event.type == 'MOUSEMOVE':
-            main_drag(context, event)
+            pos = queryMousePosition()            
+            main_drag(context, pos)
             return {'RUNNING_MODAL'}
         elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             # when I click, If I have a hit, store the hit on press
@@ -1018,13 +1117,22 @@ class DeletePins(bpy.types.Operator):
     bl_label = "Delete Modeling Cloth Pins"
     
     def execute(self, context):
+
         ob = get_last_object() # returns tuple with list and last cloth objects or None
         if ob is not None:
-            data[ob[1].name].pin_list = []
-            for i in data[ob[1].name].hook_list:
-                bpy.data.objects.remove(i)
+            print(data[ob[1].name].pin_list, 'at start')            
+            l_copy = data[ob[1].name].pin_list[:]
+            h_copy = data[ob[1].name].hook_list[:]
+            for i in range(len(data[ob[1].name].hook_list)):
+                if data[ob[1].name].hook_list[i].select:
+                    bpy.data.objects.remove(data[ob[1].name].hook_list[i])
+                    l_copy.remove(data[ob[1].name].pin_list[i]) 
+                    h_copy.remove(data[ob[1].name].hook_list[i]) 
+            
+            data[ob[1].name].pin_list = l_copy
+            data[ob[1].name].hook_list = h_copy
+            print(data[ob[1].name].pin_list, 'after')        
 
-            data[ob[1].name].hook_list = []
         bpy.context.scene.objects.active = ob[1]
         return {'FINISHED'}
 
@@ -1056,8 +1164,6 @@ class PinSelected(bpy.types.Operator):
                 
         name = ob.name
         matrix = ob.matrix_world.copy()
-        matrix_inv = ob.matrix_world.inverted().copy()
-        
         for v in sel:    
             e = bpy.data.objects.new('modeling_cloth_pin', None)
             bpy.context.scene.objects.link(e)
@@ -1117,6 +1223,26 @@ class ResetShapes(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class AddVirtualSprings(bpy.types.Operator):
+    """Add Virtual Springs Between All Selected Vertices"""
+    bl_idname = "object.modeling_cloth_add_virtual_spring"
+    bl_label = "Modeling Cloth Add Virtual Spring"
+        
+    def execute(self, context):
+        add_virtual_springs()
+        return {'FINISHED'}
+
+
+class RemoveVirtualSprings(bpy.types.Operator):
+    """Remove Virtual Springs Between All Selected Vertices"""
+    bl_idname = "object.modeling_cloth_remove_virtual_spring"
+    bl_label = "Modeling Cloth Remove Virtual Spring"
+        
+    def execute(self, context):
+        add_virtual_springs(remove=True)
+        return {'FINISHED'}
+
+
 def create_properties():            
 
     bpy.types.Object.modeling_cloth = bpy.props.BoolProperty(name="Modeling Cloth", 
@@ -1157,7 +1283,7 @@ def create_properties():
 
     bpy.types.Object.modeling_cloth_self_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
         description="Toggle self collision", 
-        default=False)#, update=pause_update)
+        default=False, update=collision_data_update)
 
     bpy.types.Object.modeling_cloth_self_collision_force = bpy.props.FloatProperty(name="recovery force", 
         description="Self colide faces repel", 
@@ -1170,6 +1296,10 @@ def create_properties():
     bpy.types.Object.modeling_cloth_self_collision_cy_size = bpy.props.FloatProperty(name="Cylinder size", 
         description="Self colide faces cylinder size", 
         default=1, precision=4, min= 0, max=4, soft_min= 0, soft_max=1.5)
+
+    bpy.types.Object.modeling_cloth_inflate = bpy.props.FloatProperty(name="inflate", 
+        description="add force to vertex normals", 
+        default=0, precision=4, min= -10, max=10, soft_min= -1, soft_max=1)
 
 
     bpy.types.Scene.modeling_cloth_data_set = {} 
@@ -1245,6 +1375,7 @@ class ModelingClothPanel(bpy.types.Panel):
                 col.prop(ob ,"modeling_cloth_noise", text="Noise")#, icon='PLAY')               
                 col.prop(ob ,"modeling_cloth_noise_decay", text="Decay Noise")#, icon='PLAY')               
                 col.prop(ob ,"modeling_cloth_gravity", text="Gravity")#, icon='PLAY')        
+                col.prop(ob ,"modeling_cloth_inflate", text="Inflate")#, icon='PLAY')        
                 col.prop(ob ,"modeling_cloth_velocity", text="Velocity")#, icon='PLAY')        
                 col.prop(ob ,"modeling_cloth_floor", text="Floor")#, icon='PLAY')        
                 col = layout.column(align=True)
@@ -1253,6 +1384,9 @@ class ModelingClothPanel(bpy.types.Panel):
                 if ob.modeling_cloth:    
                     if ob.mode == 'EDIT':
                         col.operator("object.modeling_cloth_pin_selected", text="Pin Selected")
+                        col = layout.column(align=True)
+                        col.operator("object.modeling_cloth_add_virtual_spring", text="Add Virtual Springs")
+                        col.operator("object.modeling_cloth_remove_virtual_spring", text="Remove Selected")
                     else:
                         col.operator("view3d.modeling_cloth_pin", text="Create Pins")
                     col = layout.column(align=True)
@@ -1279,6 +1413,8 @@ def register():
     bpy.utils.register_class(ShrinkSource)
     bpy.utils.register_class(ResetShapes)
     bpy.utils.register_class(UpdataPinWeights)
+    bpy.utils.register_class(AddVirtualSprings)
+    bpy.utils.register_class(RemoveVirtualSprings)
 
 
 def unregister():
@@ -1293,6 +1429,8 @@ def unregister():
     bpy.utils.unregister_class(ShrinkSource)
     bpy.utils.unregister_class(ResetShapes)
     bpy.utils.unregister_class(UpdataPinWeights)
+    bpy.utils.unregister_class(AddVirtualSprings)
+    bpy.utils.unregister_class(RemoveVirtualSprings)
     
     
 if __name__ == "__main__":
