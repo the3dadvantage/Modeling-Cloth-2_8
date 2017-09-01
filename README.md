@@ -1,4 +1,4 @@
-# BlenderSurfaceFollow
+# Modeling Cloth
 
 ## Donation
 If this project caused your head to explode or possibly attracted attention from creatures in other dimensions, please consider donating to help me justify spending time on addons. :) 
