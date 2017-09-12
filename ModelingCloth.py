@@ -15,11 +15,19 @@
 #  option to cache animation?
 #  collisions need to properly exclude pinned and vertex pinned
 #  virtual springs do something wierd to the velocity
+#  multiple converging springs go to far. Need to divide by number of springs at a vert or move them all towards a mean
 
 # now!!!!
 #  refresh self collisions.
 
-
+# collisions:
+# Onlny need to check on of the edges for groups connected to a vertex    
+# for edge to face intersections...
+# figure out where the edge hit the face
+# figure out which end of the edge is inside the face
+# move along the face normal to the surface for the point inside.
+# if I reflect by flipping the vel around the face normal
+#   if it collides on the bounce it will get caught on the next iteration
 
 
 '''??? Would it make sense to do self collisions with virtual edges ???'''
