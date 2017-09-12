@@ -18,25 +18,26 @@ if "bpy" in locals():
     imp.reload(ModelingCloth)
     imp.reload(SurfaceFollow)
     imp.reload(UVShape)
+    imp.reload(DynamicTensionMap)
     print("Reloaded multifiles")
 else:
-    from . import ModelingCloth, SurfaceFollow, UVShape
+    from . import ModelingCloth, SurfaceFollow, UVShape, DynamicTensionMap
     print("Imported multifiles")
-    
 
-
-
+   
 def register():
     ModelingCloth.register()
     SurfaceFollow.register()
     UVShape.register()
- 
+    DynamicTensionMap.register()
 
+    
 def unregister():
     ModelingCloth.unregister()
     SurfaceFollow.unregister()
     UVShape.unregister()
-     
+    DynamicTensionMap.unregister()
 
+    
 if __name__ == "__main__":
     register()
