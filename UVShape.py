@@ -458,8 +458,8 @@ def remove_properties():
 
 class Print3DTools(bpy.types.Panel):
     """Creates a new tab with physics UI"""
-    bl_label = "UV Shapes Tool"
-    bl_idname = "UV Shapes Tool"
+    bl_label = "UV Shape Tool"
+    bl_idname = "UV Shape Tool"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'TOOLS'
     bl_category = "Extended Tools"
