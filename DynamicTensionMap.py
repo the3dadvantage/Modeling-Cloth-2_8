@@ -172,7 +172,11 @@ def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     if ob is None:
         ob = bpy.context.object
     if coords is None:    
-        coords = get_coords(ob, ob)
+        if data[ob.name]['source']:
+            coords = get_key_coords(ob, 'modeling cloth key')
+        else:
+            coords = get_coords(ob, ob)
+    
     dif = coords[data[ob.name]['edges'][:,0]] - coords[data[ob.name]['edges'][:,1]]
     mags = np.sqrt(np.einsum('ij,ij->i', dif, dif))
     if bpy.context.scene.dynamic_tension_map_percentage:    
@@ -207,6 +211,9 @@ def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
 
 print('new===========================================')    
 def toggle_display(self, context):
+    global data
+    data = bpy.context.scene.dynamic_tension_map_dict
+    source = False
     if self.type == 'MESH':
         
         keys = self.data.shape_keys
@@ -218,9 +225,11 @@ def toggle_display(self, context):
             
             if 'modeling cloth source key' in keys.key_blocks:
                 key = 'modeling cloth source key'
-        
+                source = True
+                
             if self.dynamic_tension_map_on:
                 data[self.name] = {}
+                data[self.name]['source'] = source
                 initalize(self, key)            
                 reassign_mats(self, 'on')
                 self.data.vertex_colors['Tension'].active = True
@@ -268,7 +277,6 @@ def create_properties():
 
     # create data dictionary
     bpy.types.Scene.dynamic_tension_map_dict = {}
-    data = bpy.context.scene.dynamic_tension_map_dict
 
     
 # Create Classes-------------------------------:
