@@ -21,6 +21,8 @@ def get_key_coords(ob=None, key='Basis', proxy=False):
     from shape keys'''
     if ob is None:
         ob = bpy.context.object
+    if key is None:
+        return get_coords(ob)
     if proxy:
         mesh = proxy.to_mesh(bpy.context.scene, True, 'PREVIEW')
         verts = mesh.data.shape_keys.key_blocks[key].data
@@ -157,9 +159,12 @@ def dynamic_tension_handler(scene):
                 bpy.app.handlers.scene_update_post.remove(i)
     
     for i, value in items:    
-        update(ob=bpy.data.objects[i], max_stretch=stretch, bleed=0.2)   
-
-
+        if i in bpy.data.objects:
+            update(ob=bpy.data.objects[i], max_stretch=stretch, bleed=0.2)   
+        else:
+            del(data[i])
+            break
+print('==============')
 def prop_callback(self, context):
     stretch = bpy.context.scene.dynamic_tension_map_max_stretch / 100
     update(coords=None, ob=None, max_stretch=stretch, bleed=0.2)    
@@ -209,11 +214,12 @@ def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     ob.data.vertex_colors["Tension"].data.foreach_set('color',UV.ravel())
     ob.data.update()
 
-print('new===========================================')    
+
 def toggle_display(self, context):
     global data
     data = bpy.context.scene.dynamic_tension_map_dict
     source = False
+    use_key = False
     if self.type == 'MESH':
         
         keys = self.data.shape_keys
@@ -226,22 +232,26 @@ def toggle_display(self, context):
             if 'modeling cloth source key' in keys.key_blocks:
                 key = 'modeling cloth source key'
                 source = True
+            use_key = True
                 
-            if self.dynamic_tension_map_on:
-                data[self.name] = {}
-                data[self.name]['source'] = source
-                initalize(self, key)            
-                reassign_mats(self, 'on')
-                self.data.vertex_colors['Tension'].active = True
+        if self.dynamic_tension_map_on:
+            data[self.name] = {}
+            data[self.name]['source'] = source
+            if use_key:    
+                initalize(self, key)
             else:
-                if self.name in data:
-                    reassign_mats(self, 'off')
+                initalize(self, None)
+            reassign_mats(self, 'on')
+            self.data.vertex_colors['Tension'].active = True
+        else:
+            if self.name in data:
+                reassign_mats(self, 'off')
 
-            for i in bpy.app.handlers.scene_update_post:
-                if i.__name__ == 'dynamic_tension_handler':
-                    return
+        for i in bpy.app.handlers.scene_update_post:
+            if i.__name__ == 'dynamic_tension_handler':
+                return
 
-            bpy.app.handlers.scene_update_post.append(dynamic_tension_handler)        
+        bpy.app.handlers.scene_update_post.append(dynamic_tension_handler)        
 
         
 # Create Properties----------------------------:
@@ -294,9 +304,9 @@ class DynamicTensionMap(bpy.types.Panel):
         col = layout.column()
         col.label(text="Dynamic Tension Map")
         ob = bpy.context.object
-        if ob.dynamic_tension_map_on:    
-            col.alert=True
         if ob is not None:
+            if ob.dynamic_tension_map_on:    
+                col.alert=True
             if ob.type == 'MESH':
                 col.prop(ob ,"dynamic_tension_map_on", text="Toggle Dynamic Tension Map", icon='MOD_TRIANGULATE')
                 col = layout.column(align=True)
