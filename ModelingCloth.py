@@ -629,13 +629,7 @@ def run_handler(cloth):
                     co[sew_edges[:,0]] += sew_vecs
                     
 
-            # floor ---
-            if cloth.ob.modeling_cloth_floor:    
-                floored = cloth.co[:,2] < 0        
-                cloth.vel[:,2][floored] *= -1
-                cloth.vel[floored] *= .1
-                cloth.co[:, 2][floored] = 0
-            # floor ---
+
 
             #target a mesh======================:
             #target a mesh======================:
@@ -652,6 +646,10 @@ def run_handler(cloth):
             #collision=====================================
             # for grow and shrink, the distance will need to change
             #   it gets recaluclated when going in and out of edit mode already...
+            # calc velocity
+            vel_dif = cloth.vel_start - cloth.co            
+            cloth.vel += vel_dif
+
 
             self_col = cloth.ob.modeling_cloth_self_collision
 
@@ -736,10 +734,20 @@ def run_handler(cloth):
 
             #collision=====================================
 
-            # calc velocity
-            vel_dif = cloth.vel_start - cloth.co
 
-            cloth.vel += vel_dif
+            
+            
+            # floor ---
+            if cloth.ob.modeling_cloth_floor:    
+                floored = cloth.co[:,2] < 0        
+                cloth.vel[:,2][floored] *= -1
+                cloth.vel[floored] *= .1
+                cloth.co[:, 2][floored] = 0
+            # floor ---            
+            
+
+
+
             
             # inflate
             inflate = cloth.ob.modeling_cloth_inflate * .1
