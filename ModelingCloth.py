@@ -777,8 +777,11 @@ def modeling_cloth_handler(scene):
                 bpy.app.handlers.scene_update_post.remove(i)
     
     for i, cloth in items:    
-        run_handler(cloth)
-
+        if i in bpy.data.objects:
+            run_handler(cloth)
+        else:
+            del(data[i])
+            break
 
 def pause_update(self, context):
     if not self.modeling_cloth_pause:
@@ -1344,6 +1347,8 @@ def remove_properties():
     del(bpy.types.Object.modeling_cloth_gravity)        
     del(bpy.types.Object.modeling_cloth_iterations)
     del(bpy.types.Object.modeling_cloth_velocity)
+    del(bpy.types.Object.modeling_cloth_inflate)
+    del(bpy.types.Object.modeling_cloth_sew)
 
     # self collision
     del(bpy.types.Object.modeling_cloth_self_collision)    
