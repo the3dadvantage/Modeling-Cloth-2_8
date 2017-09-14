@@ -16,6 +16,57 @@ bl_info = {
     "category": '3D View'}
 
 
+def hide_unhide_store(ob=None, unhide=True, storage=None):
+    """Stores the hidden state of the geometry, """
+    if ob is None:
+        ob = bpy.context.object
+    if ob is None:
+        return 'No mesh object'
+    
+    if unhide:
+        v = np.zeros(len(ob.data.vertices), dtype=np.bool)
+        e = np.zeros(len(ob.data.edges), dtype=np.bool)
+        f = np.zeros(len(ob.data.polygons), dtype=np.bool)
+        vsel = np.zeros(len(ob.data.vertices), dtype=np.bool)
+        esel = np.zeros(len(ob.data.edges), dtype=np.bool)
+        fsel = np.zeros(len(ob.data.polygons), dtype=np.bool)        
+        if storage is not None:
+            ob.data.vertices.foreach_get('hide', v)
+            ob.data.edges.foreach_get('hide', e)
+            ob.data.polygons.foreach_get('hide', f)
+
+            ob.data.vertices.foreach_get('select', vsel)
+            ob.data.edges.foreach_get('select', esel)
+            ob.data.polygons.foreach_get('select', fsel)
+
+            
+            data['hide'] = {}
+            data['hide']['v'] = np.copy(v)
+            data['hide']['e'] = np.copy(e)
+            data['hide']['f'] = np.copy(f)
+            
+            data['hide']['vsel'] = np.copy(vsel)
+            data['hide']['esel'] = np.copy(esel)
+            data['hide']['fsel'] = np.copy(fsel)
+
+        
+        v[:] = False
+        e[:] = False
+        f[:] = False
+
+        ob.data.vertices.foreach_set('hide', v)
+        ob.data.edges.foreach_set('hide', e)
+        ob.data.polygons.foreach_set('hide', f)    
+    else:
+        ob.data.vertices.foreach_set('hide', data['hide']['v'])
+        ob.data.edges.foreach_set('hide', data['hide']['e'])
+        ob.data.polygons.foreach_set('hide', data['hide']['f'])
+
+        ob.data.vertices.foreach_set('select', data['hide']['vsel'])
+        ob.data.edges.foreach_set('select', data['hide']['esel'])
+        ob.data.polygons.foreach_set('select', data['hide']['fsel'])
+        
+
 def get_key_coords(ob=None, key='Basis', proxy=False):
     '''Creates an N x 3 numpy array of vertex coords.
     from shape keys'''
@@ -343,7 +394,15 @@ class UpdatePattern(bpy.types.Operator):
     bl_label = "dynamic_tension_update_pattern"
     bl_options = {'REGISTER', 'UNDO'}
     def execute(self, context):
+        ob = bpy.context.object
+        edit = True
+        if ob.mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        hide_unhide_store(ob, True, data)
         bpy.ops.object.shape_from_uv()
+        hide_unhide_store(ob, False, data)
+        if edit:
+            bpy.ops.object.mode_set(mode='EDIT')            
         toggle_display(bpy.context.object, context)
         prop_callback(bpy.context.scene, bpy.context)
         return {'FINISHED'}
