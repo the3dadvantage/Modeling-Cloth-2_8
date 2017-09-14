@@ -19,8 +19,6 @@ bl_info = {
 def get_key_coords(ob=None, key='Basis', proxy=False):
     '''Creates an N x 3 numpy array of vertex coords.
     from shape keys'''
-    if ob is None:
-        ob = bpy.context.object
     if key is None:
         return get_coords(ob)
     if proxy:
@@ -29,7 +27,7 @@ def get_key_coords(ob=None, key='Basis', proxy=False):
     else:
         verts = ob.data.shape_keys.key_blocks[key].data
     v_count = len(verts)
-    coords = np.zeros(v_count * 3)
+    coords = np.zeros(v_count * 3, dtype=np.float32)
     verts.foreach_get("co", coords)
     if proxy:
         bpy.data.meshes.remove(mesh)
@@ -48,7 +46,7 @@ def get_coords(ob=None, proxy=False):
     else:
         verts = ob.data.vertices
     v_count = len(verts)
-    coords = np.zeros(v_count * 3)
+    coords = np.zeros(v_count * 3, dtype=np.float32)
     verts.foreach_get("co", coords)
     if proxy:
         bpy.data.meshes.remove(mesh)
@@ -144,6 +142,7 @@ def initalize(ob, key):
     ob.data.polygons.foreach_get('material_index', mat_idx)
     data[ob.name]['mat_index'] = mat_idx
     if 'material' not in data[ob.name]:
+        print('ran this')
         material_setup(ob)
 
 
@@ -167,8 +166,16 @@ def dynamic_tension_handler(scene):
 print('==============')
 def prop_callback(self, context):
     stretch = bpy.context.scene.dynamic_tension_map_max_stretch / 100
+    edit=False
+    ob = bpy.context.object
+    if not ob.dynamic_tension_map_on:
+        return
+    if ob.mode == 'EDIT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+        edit = True
     update(coords=None, ob=None, max_stretch=stretch, bleed=0.2)    
-
+    if edit:
+        bpy.ops.object.mode_set(mode='EDIT')
     
 def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     '''Measure the edges against the stored lengths.
@@ -176,12 +183,16 @@ def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     a per-vertex basis.'''
     if ob is None:
         ob = bpy.context.object
-    if coords is None:    
-        if data[ob.name]['source']:
-            coords = get_key_coords(ob, 'modeling cloth key')
-        else:
-            coords = get_coords(ob, ob)
     
+    if data[ob.name]['source']:
+        coords = get_key_coords(ob, 'modeling cloth key')
+    if bpy.context.scene.dynamic_tension_map_show_from_flat:
+        if ob.data.shape_keys is not None:
+            if len(ob.data.shape_keys.key_blocks) > 1:
+                coords = get_key_coords(ob, ob.data.shape_keys.key_blocks[1].name)
+    if coords is None:
+        coords = get_coords(ob, ob)
+        
     dif = coords[data[ob.name]['edges'][:,0]] - coords[data[ob.name]['edges'][:,1]]
     mags = np.sqrt(np.einsum('ij,ij->i', dif, dif))
     if bpy.context.scene.dynamic_tension_map_percentage:    
@@ -211,9 +222,9 @@ def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     color[GR_range] += GR_blend
 
     UV = np.nan_to_num(color / np.sqrt(np.einsum('ij,ij->i', color, color)[:, nax]))
-    ob.data.vertex_colors["Tension"].data.foreach_set('color',UV.ravel())
+    ob.data.vertex_colors["Tension"].data.foreach_set('color', UV.ravel())
     ob.data.update()
-
+    
 
 def toggle_display(self, context):
     global data
@@ -226,17 +237,27 @@ def toggle_display(self, context):
         if keys != None:
             if 'RestShape' in keys.key_blocks:    
                 key = 'RestShape'
-            else:
-                key = keys.key_blocks[0].name
-            
-            if 'modeling cloth source key' in keys.key_blocks:
+    
+            elif 'modeling cloth source key' in keys.key_blocks:
                 key = 'modeling cloth source key'
                 source = True
+            else:
+                key = keys.key_blocks[0].name
+
             use_key = True
                 
         if self.dynamic_tension_map_on:
+            # to avoid duplicating the material:
+            mat = None
+            if self.name in data:
+                if 'material' in data[self.name]:
+                    mat = data[self.name]['material']
+            
+            #---
             data[self.name] = {}
             data[self.name]['source'] = source
+            if mat is not None:    
+                data[self.name]['material'] = mat
             if use_key:    
                 initalize(self, key)
             else:
@@ -246,12 +267,28 @@ def toggle_display(self, context):
         else:
             if self.name in data:
                 reassign_mats(self, 'off')
-
+        
+        prop_callback(bpy.context.scene, bpy.context)
+        
         for i in bpy.app.handlers.scene_update_post:
             if i.__name__ == 'dynamic_tension_handler':
                 return
 
         bpy.app.handlers.scene_update_post.append(dynamic_tension_handler)        
+
+
+def pattern_on_off(self, context):
+    if self.dynamic_tension_flat_pattern_on:
+        self.data.shape_keys.key_blocks[1].value = 1
+        self.active_shape_key_index = 1
+        
+    else:
+        self.data.shape_keys.key_blocks[1].value = 0
+        self.active_shape_key_index = 0
+
+def tension_from_flat_update(self, context):
+    toggle_display(bpy.context.object, context)
+    prop_callback(bpy.context.scene, bpy.context)
 
         
 # Create Properties----------------------------:
@@ -260,18 +297,20 @@ def percentage_prop_update(self, context):
         self['dynamic_tension_map_edge'] = False
     else:
         self['dynamic_tension_map_edge'] = True        
+
     
 def edge_prop_update(self, context):
     if self.dynamic_tension_map_edge:
         self['dynamic_tension_map_percentage'] = False
     else:
         self['dynamic_tension_map_percentage'] = True
+
         
 def create_properties():            
     global data
     
     bpy.types.Object.dynamic_tension_map_on = bpy.props.BoolProperty(name="Dynamic Tension Map On", 
-        description="For toggling the dynamic tension map", 
+        description="Amount of stretch on an edge is blender units. ", 
         default=False, update=toggle_display)
 
     bpy.types.Scene.dynamic_tension_map_max_stretch = bpy.props.FloatProperty(name="avatar height", 
@@ -285,11 +324,31 @@ def create_properties():
         description="For toggling between percentage and geometry", 
         default=False, update=edge_prop_update)
 
+    bpy.types.Scene.dynamic_tension_map_show_from_flat = bpy.props.BoolProperty(name="Dynamic Tension From Flat", 
+        description="Tension is displayed as the difference between the current shape and the source shape.", 
+        default=False, update=tension_from_flat_update)
+
+    bpy.types.Object.dynamic_tension_flat_pattern_on = bpy.props.BoolProperty(name="Dynamic Tension Flat Pattern On", 
+        description="Toggles the flat pattern shape on and off.", 
+        default=False, update=pattern_on_off)
+
     # create data dictionary
     bpy.types.Scene.dynamic_tension_map_dict = {}
 
     
 # Create Classes-------------------------------:
+class UpdatePattern(bpy.types.Operator):
+    """Update Pattern"""
+    bl_idname = "object.dynamic_tension_map_update_pattern"
+    bl_label = "dynamic_tension_update_pattern"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        bpy.ops.object.shape_from_uv()
+        toggle_display(bpy.context.object, context)
+        prop_callback(bpy.context.scene, bpy.context)
+        return {'FINISHED'}
+
+
 class DynamicTensionMap(bpy.types.Panel):
     """Dynamic Tension Map Panel"""
     bl_label = "Dynamic Tension Map"
@@ -309,10 +368,20 @@ class DynamicTensionMap(bpy.types.Panel):
                 col.alert=True
             if ob.type == 'MESH':
                 col.prop(ob ,"dynamic_tension_map_on", text="Toggle Dynamic Tension Map", icon='MOD_TRIANGULATE')
+                col = layout.column()
+                col.prop(bpy.context.scene ,"dynamic_tension_map_max_stretch", text="Max Stretch", slider=True)
                 col = layout.column(align=True)
-                col.prop(bpy.context.scene ,"dynamic_tension_map_max_stretch", text="Max Stretch", slider=True)       
-                col.prop(bpy.context.scene ,"dynamic_tension_map_percentage", text="Percentage Based", icon='STICKY_UVS_VERT')
-                col.prop(bpy.context.scene ,"dynamic_tension_map_edge", text="Edge Difference", icon='UV_VERTEXSEL')        
+                col.prop(bpy.context.scene ,"dynamic_tension_map_show_from_flat", text="Show Tension From Flat", icon='MESH_GRID')
+                if ob.data.shape_keys is not None:
+                    if len(ob.data.shape_keys.key_blocks) > 1:
+                        col.prop(ob ,"dynamic_tension_flat_pattern_on", text="Show Pattern", icon='OUTLINER_OB_LATTICE')
+                        col = layout.column()
+                        col.scale_y = 2.0
+                        col.operator("object.dynamic_tension_map_update_pattern", text="Update Pattern")
+                col = layout.column(align=True)
+
+                #col.prop(bpy.context.scene ,"dynamic_tension_map_percentage", text="Percentage Based", icon='STICKY_UVS_VERT')
+                #col.prop(bpy.context.scene ,"dynamic_tension_map_edge", text="Edge Difference", icon='UV_VERTEXSEL')        
                 return
             
         col.label(text="Select Mesh Object")
@@ -321,6 +390,7 @@ class DynamicTensionMap(bpy.types.Panel):
 def register():
     create_properties()
     bpy.utils.register_class(DynamicTensionMap)
+    bpy.utils.register_class(UpdatePattern)
     
 
 def unregister():
