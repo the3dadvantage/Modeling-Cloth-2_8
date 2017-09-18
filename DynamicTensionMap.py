@@ -214,7 +214,8 @@ def dynamic_tension_handler(scene):
         else:
             del(data[i])
             break
-print('==============')
+
+
 def prop_callback(self, context):
     stretch = bpy.context.scene.dynamic_tension_map_max_stretch / 100
     edit=False
@@ -227,6 +228,7 @@ def prop_callback(self, context):
     update(coords=None, ob=None, max_stretch=stretch, bleed=0.2)    
     if edit:
         bpy.ops.object.mode_set(mode='EDIT')
+        
     
 def update(coords=None, ob=None, max_stretch=1, bleed=0.2):
     '''Measure the edges against the stored lengths.
@@ -358,7 +360,6 @@ def edge_prop_update(self, context):
 
         
 def create_properties():            
-    global data
     
     bpy.types.Object.dynamic_tension_map_on = bpy.props.BoolProperty(name="Dynamic Tension Map On", 
         description="Amount of stretch on an edge is blender units. ", 
@@ -385,6 +386,20 @@ def create_properties():
 
     # create data dictionary
     bpy.types.Scene.dynamic_tension_map_dict = {}
+    bpy.types.Scene.dynamic_tension_map_selection = {}
+
+
+def remove_properties():
+        
+    del(bpy.types.Object.dynamic_tension_map_on)
+    del(bpy.types.Scene.dynamic_tension_map_max_stretch)
+    del(bpy.types.Scene.dynamic_tension_map_percentage)
+    del(bpy.types.Scene.dynamic_tension_map_edge)
+    del(bpy.types.Scene.dynamic_tension_map_show_from_flat)
+    del(bpy.types.Object.dynamic_tension_flat_pattern_on)
+    
+    del(bpy.types.Scene.dynamic_tension_map_dict)
+    del(bpy.types.Scene.dynamic_tension_map_selection)
 
     
 # Create Classes-------------------------------:
@@ -398,9 +413,10 @@ class UpdatePattern(bpy.types.Operator):
         edit = True
         if ob.mode == 'EDIT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        hide_unhide_store(ob, True, data)
+        storage = bpy.context.scene.dynamic_tension_map_selection
+        hide_unhide_store(ob, True, storage)
         bpy.ops.object.shape_from_uv()
-        hide_unhide_store(ob, False, data)
+        hide_unhide_store(ob, False, storage)
         if edit:
             bpy.ops.object.mode_set(mode='EDIT')            
         toggle_display(bpy.context.object, context)
@@ -445,6 +461,7 @@ class DynamicTensionMap(bpy.types.Panel):
             
         col.label(text="Select Mesh Object")
 
+
 # Register Clases -------------->>>
 def register():
     create_properties()
@@ -453,7 +470,12 @@ def register():
     
 
 def unregister():
-    bpy.app.handlers.scene_update_pre.remove(dynamic_tension_handler)    
+    remove_properties()
+    for i in bpy.app.handlers.scene_update_post:
+        if i.__name__ == 'dynamic_tension_handler':
+            bpy.app.handlers.scene_update_post.remove(i)
+    bpy.utils.unregister_class(DynamicTensionMap)
+    bpy.utils.unregister_class(UpdatePattern)
 
     
 if __name__ == "__main__":
