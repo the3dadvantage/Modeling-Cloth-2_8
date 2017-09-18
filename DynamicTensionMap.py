@@ -40,14 +40,14 @@ def hide_unhide_store(ob=None, unhide=True, storage=None):
             ob.data.polygons.foreach_get('select', fsel)
 
             
-            data['hide'] = {}
-            data['hide']['v'] = np.copy(v)
-            data['hide']['e'] = np.copy(e)
-            data['hide']['f'] = np.copy(f)
+            storage['hide'] = {}
+            storage['hide']['v'] = np.copy(v)
+            storage['hide']['e'] = np.copy(e)
+            storage['hide']['f'] = np.copy(f)
             
-            data['hide']['vsel'] = np.copy(vsel)
-            data['hide']['esel'] = np.copy(esel)
-            data['hide']['fsel'] = np.copy(fsel)
+            storage['hide']['vsel'] = np.copy(vsel)
+            storage['hide']['esel'] = np.copy(esel)
+            storage['hide']['fsel'] = np.copy(fsel)
 
         
         v[:] = False
@@ -58,13 +58,13 @@ def hide_unhide_store(ob=None, unhide=True, storage=None):
         ob.data.edges.foreach_set('hide', e)
         ob.data.polygons.foreach_set('hide', f)    
     else:
-        ob.data.vertices.foreach_set('hide', data['hide']['v'])
-        ob.data.edges.foreach_set('hide', data['hide']['e'])
-        ob.data.polygons.foreach_set('hide', data['hide']['f'])
+        ob.data.vertices.foreach_set('hide', storage['hide']['v'])
+        ob.data.edges.foreach_set('hide', storage['hide']['e'])
+        ob.data.polygons.foreach_set('hide', storage['hide']['f'])
 
-        ob.data.vertices.foreach_set('select', data['hide']['vsel'])
-        ob.data.edges.foreach_set('select', data['hide']['esel'])
-        ob.data.polygons.foreach_set('select', data['hide']['fsel'])
+        ob.data.vertices.foreach_set('select', storage['hide']['vsel'])
+        ob.data.edges.foreach_set('select', storage['hide']['esel'])
+        ob.data.polygons.foreach_set('select', storage['hide']['fsel'])
         
 
 def get_key_coords(ob=None, key='Basis', proxy=False):
