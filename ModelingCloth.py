@@ -916,6 +916,7 @@ class ModelingClothPin(bpy.types.Operator):
     """Modal ray cast for placing pins"""
     bl_idname = "view3d.modeling_cloth_pin"
     bl_label = "Modeling Cloth Pin"
+    bl_options = {'REGISTER', 'UNDO'}
     def __init__(self):
         bpy.ops.object.select_all(action='DESELECT')    
         extra_data['just_clicked'] = False
@@ -1077,6 +1078,7 @@ class ModelingClothDrag(bpy.types.Operator):
     """Modal ray cast for dragging"""
     bl_idname = "view3d.modeling_cloth_drag"
     bl_label = "Modeling Cloth Drag"
+    bl_options = {'REGISTER', 'UNDO'}
     def __init__(self):
         bpy.ops.object.select_all(action='DESELECT')    
         extra_data['hit'] = None
@@ -1149,7 +1151,7 @@ class DeletePins(bpy.types.Operator):
     """Delete modeling cloth pins and clear pin list for current object"""
     bl_idname = "object.delete_modeling_cloth_pins"
     bl_label = "Delete Modeling Cloth Pins"
-    
+    bl_options = {'REGISTER', 'UNDO'}    
     def execute(self, context):
 
         ob = get_last_object() # returns tuple with list and last cloth objects or None
@@ -1175,7 +1177,7 @@ class SelectPins(bpy.types.Operator):
     """Select modeling cloth pins for current object"""
     bl_idname = "object.select_modeling_cloth_pins"
     bl_label = "Select Modeling Cloth Pins"
-    
+    bl_options = {'REGISTER', 'UNDO'}    
     def execute(self, context):
         ob = get_last_object() # returns list and last cloth objects or None
         if ob is not None:
@@ -1190,7 +1192,7 @@ class PinSelected(bpy.types.Operator):
     """Add pins to verts selected in edit mode"""
     bl_idname = "object.modeling_cloth_pin_selected"
     bl_label = "Modeling Cloth Pin Selected"
-    
+    bl_options = {'REGISTER', 'UNDO'}    
     def execute(self, context):
         ob = bpy.context.object
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -1221,7 +1223,7 @@ class UpdataPinWeights(bpy.types.Operator):
     """Update Pin Weights"""
     bl_idname = "object.modeling_cloth_update_pin_group"
     bl_label = "Modeling Cloth Update Pin Weights"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         update_pin_group()
         return {'FINISHED'}
@@ -1231,7 +1233,7 @@ class GrowSource(bpy.types.Operator):
     """Grow Source Shape"""
     bl_idname = "object.modeling_cloth_grow"
     bl_label = "Modeling Cloth Grow"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         scale_source(1.02)
         return {'FINISHED'}
@@ -1241,7 +1243,7 @@ class ShrinkSource(bpy.types.Operator):
     """Shrink Source Shape"""
     bl_idname = "object.modeling_cloth_shrink"
     bl_label = "Modeling Cloth Shrink"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         scale_source(0.98)
         return {'FINISHED'}
@@ -1251,7 +1253,7 @@ class ResetShapes(bpy.types.Operator):
     """Reset Shapes"""
     bl_idname = "object.modeling_cloth_reset"
     bl_label = "Modeling Cloth Reset"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         reset_shapes()
         return {'FINISHED'}
@@ -1261,7 +1263,7 @@ class AddVirtualSprings(bpy.types.Operator):
     """Add Virtual Springs Between All Selected Vertices"""
     bl_idname = "object.modeling_cloth_add_virtual_spring"
     bl_label = "Modeling Cloth Add Virtual Spring"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         add_virtual_springs()
         return {'FINISHED'}
@@ -1271,7 +1273,7 @@ class RemoveVirtualSprings(bpy.types.Operator):
     """Remove Virtual Springs Between All Selected Vertices"""
     bl_idname = "object.modeling_cloth_remove_virtual_spring"
     bl_label = "Modeling Cloth Remove Virtual Spring"
-        
+    bl_options = {'REGISTER', 'UNDO'}        
     def execute(self, context):
         add_virtual_springs(remove=True)
         return {'FINISHED'}
@@ -1474,6 +1476,7 @@ class Donate(bpy.types.Operator):
     """Support my addons by donating"""
     bl_idname = "object.modeling_cloth_donate"
     bl_label = "Modeling Cloth Donate"
+
         
     def execute(self, context):
         collision_series(False, False)
