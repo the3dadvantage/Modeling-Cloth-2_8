@@ -49,18 +49,7 @@ import bmesh
 import numpy as np
 from numpy import newaxis as nax
 from bpy_extras import view3d_utils
-from ctypes import windll, Structure, c_ulong, byref
 import time
-
-
-class POINT(Structure):
-    _fields_ = [("x", c_ulong), ("y", c_ulong)]
-
-
-def queryMousePosition():
-    pt = POINT()
-    windll.user32.GetCursorPos(byref(pt))
-    return { "x": pt.x, "y": pt.y}
 
 
 you_have_a_sense_of_humor = False
@@ -983,35 +972,16 @@ class ModelingClothPin(bpy.types.Operator):
 #[‘DEFAULT’, ‘NONE’, ‘WAIT’, ‘CROSSHAIR’, ‘MOVE_X’, ‘MOVE_Y’, ‘KNIFE’, ‘TEXT’, ‘PAINT_BRUSH’, ‘HAND’, ‘SCROLL_X’, ‘SCROLL_Y’, ‘SCROLL_XY’, ‘EYEDROPPER’]
 
 def main_drag(context, event):
-    """Raycaster for dragging"""
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            for reg in area.regions:
-                if reg.type == 'WINDOW':
-                    region = reg
-            for space in area.spaces:
-                if space.type == 'VIEW_3D':
-                    if hasattr(space, 'region_3d'):
-                        rv3d = space.region_3d
-    
-    user32 = windll.user32
-    screensize = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
-    
-    X= region.x
-    Y= region.y
-    top = screensize[1]
+    # get the context arguments
+    scene = context.scene
+    region = context.region
+    rv3d = context.region_data
+    coord = event.mouse_region_x, event.mouse_region_y
 
-    win_x = bpy.context.window_manager.windows[0].x
-    win_y = bpy.context.window_manager.windows[0].y
-
-    flipped = top - (event['y'] + Y + win_y)
-    
-    coord = (event['x'] - win_x - X, flipped)
-
-    view3d_utils.region_2d_to_location_3d
-    
+    # get the ray from the viewport and mouse
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
     ray_target = ray_origin + view_vector
 
     def visible_objects_and_duplis():
@@ -1096,8 +1066,8 @@ class ModelingClothDrag(bpy.types.Operator):
             # allow navigation
             return {'PASS_THROUGH'}
         elif event.type == 'MOUSEMOVE':
-            pos = queryMousePosition()            
-            main_drag(context, pos)
+            #pos = queryMousePosition()            
+            main_drag(context, event)
             return {'RUNNING_MODAL'}
         elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             # when I click, If I have a hit, store the hit on press
