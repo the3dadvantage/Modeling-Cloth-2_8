@@ -58,6 +58,64 @@ if you_have_a_sense_of_humor:
     import antigravity
 
 
+def get_co(ob, arr=None, key=None): # key
+    """Returns vertex coords as N x 3"""
+    c = len(ob.data.vertices)
+    if arr is None:    
+        arr = np.zeros(c * 3, dtype=np.float32)
+    if key is not None:
+        ob.data.shape_keys.key_blocks[key].data.foreach_get('co', arr.ravel())        
+        arr.shape = (c, 3)
+        return arr
+    ob.data.vertices.foreach_get('co', arr.ravel())
+    arr.shape = (c, 3)
+    return arr
+
+
+def get_proxy_co(ob, arr):
+    """Returns vertex coords with modifier effects as N x 3"""
+    me = ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
+    c = len(me.vertices)
+    me.vertices.foreach_get('co', arr.ravel())
+    bpy.data.meshes.remove(me)
+    arr.shape = (c, 3)
+    return arr
+
+
+def apply_transforms(ob, co=None):
+    """Get vert coords in world space"""
+    if co is None:
+        co = get_co(ob)
+    m = np.array(ob.matrix_world)    
+    mat = m[:3, :3].T # rotates backwards without T
+    loc = m[:3, 3]
+    return co @ mat + loc
+
+
+def applied_key_co(ob, arr=None, key=None):
+    """Get vert coords in world space"""
+    c = len(ob.data.vertices)
+    if arr is None:
+        arr = np.zeros(c * 3, dtype=np.float32)
+    ob.data.shape_keys.key_blocks[key].data.foreach_get('co', arr)
+    arr.shape = (c, 3)
+    m = np.array(ob.matrix_world)    
+    mat = m[:3, :3].T # rotates backwards without T
+    loc = m[:3, 3]
+    return co @ mat + loc
+
+
+
+def revert_transforms(ob, co):
+    """Set world coords on object. 
+    Run before setting coords to deal with object transforms
+    if using apply_transforms()"""
+    m = np.linalg.inv(ob.matrix_world)    
+    mat = m[:3, :3].T # rotates backwards without T
+    loc = m[:3, 3]
+    return co @ mat + loc  
+
+
 def get_last_object():
     """Finds cloth objects for keeping settings active
     while selecting other objects like pins"""
@@ -416,6 +474,7 @@ def reset_shapes():
     count = len(ob.data.vertices)
     co = np.zeros(count * 3, dtype=np.float32)
     keys['modeling cloth source key'].data.foreach_get('co', co)
+    #co = applied_key_co(ob, None, 'modeling cloth source key')
     keys['modeling cloth key'].data.foreach_set('co', co)
 
     data[ob.name].vel *= 0
@@ -1019,9 +1078,11 @@ def main_drag(context, event):
                     extra_data['clicked'] = False
                     
     if extra_data['stored_mouse'] is not None:
-        move = np.array(extra_data['target'] * extra_data['matrix']) - extra_data['stored_mouse']
-        extra_data['move'] = move
-
+        move = np.array(extra_data['target']) - extra_data['stored_mouse']
+        m = np.linalg.inv(extra_data['matrix'])    
+        mat = m[:3, :3]
+        extra_data['move'] = (move @ np.array(extra_data['matrix'])[:3, :3].T)
+                   
                    
 # dragger===
 class ModelingClothDrag(bpy.types.Operator):
