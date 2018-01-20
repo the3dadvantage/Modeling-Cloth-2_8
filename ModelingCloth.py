@@ -816,35 +816,16 @@ def init_cloth(self, context):
 
 
 def main(context, event):
-    """Raycaster for placing pins"""
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            for reg in area.regions:
-                if reg.type == 'WINDOW':
-                    region = reg
-            for space in area.spaces:
-                if space.type == 'VIEW_3D':
-                    if hasattr(space, 'region_3d'):
-                        rv3d = space.region_3d
-    
-    user32 = windll.user32
-    screensize = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
-    
-    X= region.x
-    Y= region.y
-    top = screensize[1]
+    # get the context arguments
+    scene = context.scene
+    region = context.region
+    rv3d = context.region_data
+    coord = event.mouse_region_x, event.mouse_region_y
 
-    win_x = bpy.context.window_manager.windows[0].x
-    win_y = bpy.context.window_manager.windows[0].y
-
-    flipped = top - (event['y'] + Y + win_y)
-    
-    coord = (event['x'] - win_x - X, flipped)
-
-    view3d_utils.region_2d_to_location_3d
-    
+    # get the ray from the viewport and mouse
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+
     ray_target = ray_origin + view_vector
     
     guide = create_giude()
@@ -918,8 +899,7 @@ class ModelingClothPin(bpy.types.Operator):
             # allow navigation
             return {'PASS_THROUGH'}
         elif event.type == 'MOUSEMOVE':
-            pos = queryMousePosition()
-            main(context, pos)
+            main(context, event)
             return {'RUNNING_MODAL'}
         elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             if extra_data['latest_hit'] is not None:
