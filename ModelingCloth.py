@@ -118,9 +118,8 @@ def revert_transforms(ob, co):
 
 
 def revert_rotation(ob, co):
-    """Set world coords on object. 
-    Run before setting coords to deal with object transforms
-    if using apply_transforms()"""
+    """When reverting vectors such as normals we only need
+    to rotate"""
     #m = np.linalg.inv(ob.matrix_world)    
     m = np.array(ob.matrix_world)
     mat = m[:3, :3] # rotates backwards without T
@@ -182,8 +181,9 @@ def get_poly_normals(ob, type=np.float32):
     return normal
 
 
-def get_v_normals(ob, type=np.float32):
-    """"""
+def get_v_normals(ob, arr):
+    """Since we're reading from a shape key we have to use
+    a proxy mesh."""
     mod = False
     m_count = len(ob.modifiers)
     if m_count > 0:
@@ -193,15 +193,20 @@ def get_v_normals(ob, type=np.float32):
         ob.modifiers.foreach_set('show_render', ren_set)
         mod = True
     mesh = ob.to_mesh(bpy.context.scene, True, 'RENDER')
-    v_count = len(mesh.vertices)
-    normal = np.zeros(v_count * 3)#, dtype=type)
-    mesh.vertices.foreach_get('normal', normal)
-    normal.shape = (v_count, 3)
+    #v_count = len(mesh.vertices)
+    #normal = np.zeros(v_count * 3)#, dtype=type)
+    mesh.vertices.foreach_get('normal', arr.ravel())
+    #normal.shape = (v_count, 3)
     bpy.data.meshes.remove(mesh)
     if mod:
         ob.modifiers.foreach_set('show_render', show)
 
-    return normal
+    #return normal
+
+
+def get_v_nor(ob, nor_arr):
+    ob.data.vertices.foreach_get('normal', nor_arr.ravel())
+    return nor_arr
 
 
 def closest_point_edge(e1, e2, p):
@@ -525,6 +530,20 @@ def refresh_noise(self, context):
         data[self.name].noise = ((zeros + -0.5) * self.modeling_cloth_noise * 0.1)[:, nax]
 
 
+def generate_wind(wind_vec, ob, nor_arr, wind, vel):
+    """Maintains a wind array and adds it to the cloth vel"""    
+    wind *= 0.9
+    if np.any(wind_vec):
+        turb = ob.modeling_cloth_turbulence
+        w_vec = revert_rotation(ob, wind_vec)
+        wind += w_vec * (1 - np.random.random(nor_arr.shape) * -turb) 
+        
+        # only blow on verts facing the wind
+        perp = nor_arr @ w_vec 
+        wind *= np.abs(perp[:, nax])
+        vel += wind    
+        
+    
 class Cloth(object):
     pass
 
@@ -611,6 +630,10 @@ def create_instance(new=True):
     cloth.vel_start = np.zeros(cloth.count * 3, dtype=np.float32)
     cloth.vel_start.shape = (cloth.count, 3)
     cloth.vel.shape = (cloth.count, 3)
+    
+    cloth.v_normals = np.zeros(co.shape)
+    get_v_normals(cloth.ob, cloth.v_normals)
+    cloth.wind = np.zeros(co.shape)
     
     #noise---
     noise_zeros = np.zeros(cloth.count, dtype=np.float32)
@@ -858,16 +881,26 @@ def run_handler(cloth):
             # floor ---            
             
 
-
-
+            # refresh normals for inflate and wind
+            get_v_normals(cloth.ob, cloth.v_normals)
+            
+            # wind
+            x = cloth.ob.modeling_cloth_wind_x
+            y = cloth.ob.modeling_cloth_wind_y
+            z = cloth.ob.modeling_cloth_wind_z
+            wind_vec = np.array([x,y,z])
+            
+            generate_wind(wind_vec, cloth.ob, cloth.v_normals, cloth.wind, cloth.vel)
+            #cloth.vel += cloth.wind
             
             # inflate
             inflate = cloth.ob.modeling_cloth_inflate * .1
             if inflate != 0:
-                v_normals = get_v_normals(cloth.ob)
-                v_normals *= inflate
-                cloth.vel += v_normals            
+                cloth.v_normals *= inflate
+                cloth.vel += cloth.v_normals            
             
+
+                
             #cloth.vel[:,2][cloth.pindexer] += cloth.ob.modeling_cloth_gravity * .01
             grav = cloth.ob.modeling_cloth_gravity * .01
             cloth.vel[cloth.pindexer] += revert_rotation(cloth.ob, np.array([0, 0, grav]))
@@ -1410,7 +1443,7 @@ def create_properties():
 
     bpy.types.Object.modeling_cloth_turbulence = bpy.props.FloatProperty(name="Wind Turbulence", 
         description="Add Randomness to wind", 
-        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+        default=0, min=0, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
 
     # ------------------------
 
