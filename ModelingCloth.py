@@ -2,9 +2,11 @@
 #   you will go beyond the known limits of the code
 #   universe where there are most certainly monsters
 
+# might be able to get a speedup where I'm appending move and -move
+
 # to do:
 #  use point raycaster to make a cloth_wrap option
-#  add sewing springs
+#  fix multiple sew spring error
 #  set up better indexing so that edges only get calculated once
 #  self colisions
 #  object collisions
@@ -105,7 +107,6 @@ def applied_key_co(ob, arr=None, key=None):
     return co @ mat + loc
 
 
-
 def revert_transforms(ob, co):
     """Set world coords on object. 
     Run before setting coords to deal with object transforms
@@ -114,6 +115,16 @@ def revert_transforms(ob, co):
     mat = m[:3, :3].T # rotates backwards without T
     loc = m[:3, 3]
     return co @ mat + loc  
+
+
+def revert_rotation(ob, co):
+    """Set world coords on object. 
+    Run before setting coords to deal with object transforms
+    if using apply_transforms()"""
+    #m = np.linalg.inv(ob.matrix_world)    
+    m = np.array(ob.matrix_world)
+    mat = m[:3, :3] # rotates backwards without T
+    return co @ mat
 
 
 def get_last_object():
@@ -172,6 +183,7 @@ def get_poly_normals(ob, type=np.float32):
 
 
 def get_v_normals(ob, type=np.float32):
+    """"""
     mod = False
     m_count = len(ob.modifiers)
     if m_count > 0:
@@ -327,7 +339,7 @@ def get_minimal_edges(ob):
             f_verts = p_verts[start:stop]
             for fv in range(len(f_verts)):
                 if fv > 1:        # as we go around the loop of verts in face we start overlapping
-                    skip = fv + 1 # this lets us skip the overlap so we done have mirror duplicates
+                    skip = fv + 1 # this lets us skip the overlap so we don't have mirror duplicates
                 roller = np.roll(f_verts, fv)
                 for r in roller[skip:-1]:
                     diag_eidx.append([roller[0], r])
@@ -362,7 +374,6 @@ def add_virtual_springs(remove=False):
         
         if cloth.virtual_springs.shape[0] == 0:
             cloth.virtual_springs.shape = (0, 2)
-
         return
 
     existing = np.append(cloth.eidx, cloth.virtual_springs, axis=0)
@@ -388,7 +399,7 @@ def add_virtual_springs(remove=False):
 
 
 def generate_guide_mesh():
-    """Makes the icosphere that appears when creating pins"""
+    """Makes the arrow that appears when creating pins"""
     verts = [[0.0, 0.0, 0.0], [-0.01, -0.01, 0.1], [-0.01, 0.01, 0.1], [0.01, -0.01, 0.1], [0.01, 0.01, 0.1], [-0.03, -0.03, 0.1], [-0.03, 0.03, 0.1], [0.03, 0.03, 0.1], [0.03, -0.03, 0.1], [-0.01, -0.01, 0.2], [-0.01, 0.01, 0.2], [0.01, -0.01, 0.2], [0.01, 0.01, 0.2]]
     edges = [[0, 5], [5, 6], [6, 7], [7, 8], [8, 5], [1, 2], [2, 4], [4, 3], [3, 1], [5, 1], [2, 6], [4, 7], [3, 8], [9, 10], [10, 12], [12, 11], [11, 9], [3, 11], [9, 1], [2, 10], [12, 4], [6, 0], [7, 0], [8, 0]]
     faces = [[0, 5, 6], [0, 6, 7], [0, 7, 8], [0, 8, 5], [1, 3, 11, 9], [1, 2, 6, 5], [2, 4, 7, 6], [4, 3, 8, 7], [3, 1, 5, 8], [12, 10, 9, 11], [4, 2, 10, 12], [3, 4, 12, 11], [2, 1, 9, 10]]
@@ -427,7 +438,7 @@ def create_giude():
 
 
 def delete_giude():
-    """Deletes the icosphere"""
+    """Deletes the arrow"""
     if 'ModelingClothPinGuide' in bpy.data.objects:
         bpy.data.objects.remove(bpy.data.objects['ModelingClothPinGuide'])
     if 'ModelingClothPinGuide' in bpy.data.meshes:        
@@ -476,12 +487,25 @@ def reset_shapes():
     keys['modeling cloth source key'].data.foreach_get('co', co)
     #co = applied_key_co(ob, None, 'modeling cloth source key')
     keys['modeling cloth key'].data.foreach_set('co', co)
-
-    data[ob.name].vel *= 0
     
-    ob.data.shape_keys.key_blocks['modeling cloth key'].mute = True
-    ob.data.shape_keys.key_blocks['modeling cloth key'].mute = False
+    # reset the data stored in the class
+    data[ob.name].vel = 0
+    co.shape = (co.shape[0]//3, 3)
+    data[ob.name].co = co
+    
+    keys['modeling cloth key'].mute = True
+    keys['modeling cloth key'].mute = False
 
+
+def get_spring_mix(ob, eidx):
+    rs = []
+    ls = []
+    for i in eidx:
+        rs.append(eidx[eidx == i[1]].shape[0])
+        ls.append(eidx[eidx == i[0]].shape[0])
+    mix = 1 / np.array(rs + ls)
+    return mix
+        
 
 def update_pin_group():
     """Updates the cloth data after changing mesh or vertex weight pins"""
@@ -506,24 +530,27 @@ class Cloth(object):
 
 
 def create_instance(new=True):
-    if new:    
+    """Creates instance of cloth object with attributes needed for engine"""
+    if new:
         cloth = Cloth()
-        cloth.ob = bpy.context.object
-        
-        cloth.pin_list = []
-        cloth.hook_list = []
-        cloth.virtual_springs = np.empty((0,2), dtype=np.int32)
-        cloth.sew_springs = []
+        cloth.ob = bpy.context.object # based on what the user has as the active object
+        cloth.pin_list = [] # these will not be moved by the engine
+        cloth.hook_list = [] # these will be moved by hooks and updated to the engine
+        cloth.virtual_springs = np.empty((0,2), dtype=np.int32) # so we can attach points to each other without regard to topology
+        cloth.sew_springs = [] # edges with no faces attached can be set to shrink
     
-    else:
+    else: # if we set a modeling cloth object and have something else selected, the most recent object will still have it's settings expose in the ui
         ob = get_last_object()[1]
         cloth = data[ob.name]
         cloth.ob = ob 
     bpy.context.scene.objects.active = cloth.ob
+    
+    # data only accesible through object mode
     mode = cloth.ob.mode
     if mode == 'EDIT':
         bpy.ops.object.mode_set(mode='OBJECT')
-        
+    
+    # data is read from a source shape and written to the display shape so we can change the target springs by changing the source shape
     cloth.name = cloth.ob.name
     if cloth.ob.data.shape_keys == None:
         cloth.ob.shape_key_add('Basis')    
@@ -533,7 +560,8 @@ def create_instance(new=True):
         cloth.ob.shape_key_add('modeling cloth key')        
         cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].value=1
     cloth.count = len(cloth.ob.data.vertices)
-
+    
+    # we can set a large group's pin state using the vertex group. No hooks are used here
     if 'modeling_cloth_pin' not in cloth.ob.vertex_groups:
         cloth.pin_group = create_vertex_groups(groups=['modeling_cloth_pin'], weights=[0.0], ob=None)
     for i in range(cloth.count):
@@ -555,6 +583,9 @@ def create_instance(new=True):
     if cloth.virtual_springs.shape[0] > 0:
         cloth.eidx = np.append(cloth.eidx, cloth.virtual_springs, axis=0)
     cloth.eidx_tiler = cloth.eidx.T.ravel()    
+
+    mixology = get_spring_mix(cloth.ob, cloth.eidx)
+    
 
     eidx1 = np.copy(cloth.eidx)
     pindexer = np.arange(cloth.count, dtype=np.int32)[cloth.pin_bool]
@@ -590,10 +621,16 @@ def create_instance(new=True):
     cloth.waiting = False
     cloth.clicked = False # for the grab tool
     
+    print(cloth.eidx_tiler.shape, 'this is my tiler')
+    
     uni = np.unique(cloth.eidx_tiler, return_inverse=True, return_counts=True)
 
     cloth.mix = (1/uni[2][uni[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
-    cloth.mix = cloth.mix
+
+    # this helps with extra springs behaving as if they had more mass---->>>
+    #cloth.mix = mixology[unpinned][:, nax]
+    cloth.mix = (cloth.mix ** .777) / 7
+    # -------------->>>
     
     self_col = cloth.ob.modeling_cloth_self_collision
     if self_col:
@@ -607,8 +644,6 @@ def create_instance(new=True):
         cloth.cy_dists *= cloth.ob.modeling_cloth_self_collision_cy_size
         
         nei = cloth.point_mean_neighbors.ravel() # eliminate neighbors for point in face check
-        print(np.arange(cloth.count).shape)
-        print(pindexer.shape)
         cloth.v_repeater = np.repeat(pindexer, cloth.p_count)[nei]
         cloth.p_repeater = np.tile(np.arange(cloth.p_count, dtype=np.int32),(cloth.count,))[nei]
         cloth.bool_repeater = np.ones(cloth.p_repeater.shape[0], dtype=np.bool)
@@ -639,10 +674,9 @@ def run_handler(cloth):
             cloth.ob.data.shape_keys.key_blocks['modeling cloth source key'].data.foreach_get('co', cloth.sco.ravel())
             sco = cloth.sco
             sco.shape = (cloth.count, 3)
-            cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].data.foreach_get('co', cloth.co.ravel())
+            #cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].data.foreach_get('co', cloth.co.ravel())
             co = cloth.co
-            co.shape = (cloth.count, 3)
-
+            #co.shape = (cloth.count, 3)
             svecs = sco[eidx[:, 1]] - sco[eidx[:, 0]]
             sdots = np.einsum('ij,ij->i', svecs, svecs)
 
@@ -654,13 +688,18 @@ def run_handler(cloth):
             mix = cloth.mix * force
             for x in range(cloth.ob.modeling_cloth_iterations):    
 
+                # add pull
                 vecs = co[eidx[:, 1]] - co[eidx[:, 0]]
                 dots = np.einsum('ij,ij->i', vecs, vecs)
                 div = np.nan_to_num(sdots / dots)
                 swap = vecs * np.sqrt(div)[:, nax]
-                move = (vecs - swap)
-                tiled_move = np.append(move, -move, axis=0)[cloth.unpinned] * mix # * mix for stability: force multiplied by 1/number of springs
+                move = vecs - swap
+                # pull only test--->>>
+                #move[div > 1] = 0
+                # pull only test--->>>
                 
+                tiled_move = np.append(move, -move, axis=0)[cloth.unpinned] * mix # * mix for stability: force multiplied by 1/number of springs
+                #tiled_move = np.append(move, -move, axis=0)[cloth.unpinned] * new_mix # * mix for stability: force multiplied by 1/number of springs
                 np.add.at(cloth.co, cloth.eidx_tiler, tiled_move)
                 
                 if len(cloth.pin_list) > 0:
@@ -695,8 +734,33 @@ def run_handler(cloth):
             # for grow and shrink, the distance will need to change
             #   it gets recaluclated when going in and out of edit mode already...
             # calc velocity
-            vel_dif = cloth.vel_start - cloth.co            
-            cloth.vel += vel_dif
+            
+            
+            # test velocity clip---->>>
+            #vel_dif = cloth.vel_start - cloth.co            
+            vel_dif = cloth.co - cloth.vel_start
+
+            cloth.vel += vel_dif            
+        
+            # higher speed = mor drag test
+            # The amount of drage increases with speed. 
+            # have to converto to a range between 0 and 1
+            squared_move_dist = np.einsum("ij, ij->i", cloth.vel, cloth.vel)
+            #drag = 1 / squared_move_dist
+            squared_move_dist += 1
+            cloth.vel *= (1 / (squared_move_dist / cloth.ob.modeling_cloth_velocity))[:, nax]
+            #print((1 / squared_move_dist)[:5])
+            
+            
+            
+            #cloth.vel *= np.clip((1 - squared_move_dist), 0, 1)[:, nax]
+            #cloth.vel = np.clip(cloth.vel, -.1, .1)
+
+
+            # test velocity clip---->>>            
+            
+            
+
 
 
             self_col = cloth.ob.modeling_cloth_self_collision
@@ -802,11 +866,14 @@ def run_handler(cloth):
             if inflate != 0:
                 v_normals = get_v_normals(cloth.ob)
                 v_normals *= inflate
-                cloth.vel -= v_normals            
+                cloth.vel += v_normals            
             
-            cloth.vel[:,2][cloth.pindexer] -= cloth.ob.modeling_cloth_gravity * .01
-            cloth.vel *= cloth.ob.modeling_cloth_velocity
-            co[cloth.pindexer] -= cloth.vel[cloth.pindexer]        
+            #cloth.vel[:,2][cloth.pindexer] += cloth.ob.modeling_cloth_gravity * .01
+            grav = cloth.ob.modeling_cloth_gravity * .01
+            cloth.vel[cloth.pindexer] += revert_rotation(cloth.ob, np.array([0, 0, grav]))
+            
+            #cloth.vel *= cloth.ob.modeling_cloth_velocity
+            co[cloth.pindexer] += cloth.vel[cloth.pindexer]
 
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
@@ -1079,8 +1146,8 @@ def main_drag(context, event):
                     
     if extra_data['stored_mouse'] is not None:
         move = np.array(extra_data['target']) - extra_data['stored_mouse']
-        m = np.linalg.inv(extra_data['matrix'])    
-        mat = m[:3, :3]
+        #m = np.linalg.inv(extra_data['matrix'])    
+        #mat = m[:3, :3]
         extra_data['move'] = (move @ np.array(extra_data['matrix'])[:3, :3].T)
                    
                    
@@ -1314,7 +1381,7 @@ def create_properties():
 
     bpy.types.Object.modeling_cloth_spring_force = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=0.9, precision=4, min=0, max=1.3)#, update=refresh_noise)
+        default=0.9, precision=4, min=0, max=5)#, update=refresh_noise)
 
     bpy.types.Object.modeling_cloth_gravity = bpy.props.FloatProperty(name="Modeling Cloth Gravity", 
         description="Modeling cloth gravity", 
@@ -1327,6 +1394,25 @@ def create_properties():
     bpy.types.Object.modeling_cloth_velocity = bpy.props.FloatProperty(name="Velocity", 
         description="Cloth keeps moving", 
         default=.9, min= -1.1, max=1.1, soft_min= -1, soft_max=1)#, update=refresh_noise_decay)
+
+    # Wind. Note, wind should be measured agains normal and be at zero when normals are at zero. Squared should work
+    bpy.types.Object.modeling_cloth_wind_x = bpy.props.FloatProperty(name="Wind X", 
+        description="Not the window cleaner", 
+        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+
+    bpy.types.Object.modeling_cloth_wind_y = bpy.props.FloatProperty(name="Wind Y", 
+        description="Because wind is cool", 
+        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+
+    bpy.types.Object.modeling_cloth_wind_z = bpy.props.FloatProperty(name="Wind Z", 
+        description="It's windzee outzide", 
+        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+
+    bpy.types.Object.modeling_cloth_turbulence = bpy.props.FloatProperty(name="Wind Turbulence", 
+        description="Add Randomness to wind", 
+        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+
+    # ------------------------
 
     bpy.types.Object.modeling_cloth_self_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
         description="Toggle self collision", 
@@ -1347,7 +1433,6 @@ def create_properties():
     bpy.types.Object.modeling_cloth_inflate = bpy.props.FloatProperty(name="inflate", 
         description="add force to vertex normals", 
         default=0, precision=4, min= -10, max=10, soft_min= -1, soft_max=1)
-
 
     bpy.types.Object.modeling_cloth_sew = bpy.props.FloatProperty(name="sew", 
         description="add force to vertex normals", 
@@ -1431,6 +1516,12 @@ class ModelingClothPanel(bpy.types.Panel):
                 col.prop(ob ,"modeling_cloth_inflate", text="Inflate")#, icon='PLAY')        
                 col.prop(ob ,"modeling_cloth_sew", text="Sew Force")#, icon='PLAY')        
                 col.prop(ob ,"modeling_cloth_velocity", text="Velocity")#, icon='PLAY')        
+                col = layout.column(align=True)
+                col.label("Wind")                
+                col.prop(ob ,"modeling_cloth_wind_x", text="Wind X")#, icon='PLAY')        
+                col.prop(ob ,"modeling_cloth_wind_y", text="Wind Y")#, icon='PLAY')        
+                col.prop(ob ,"modeling_cloth_wind_z", text="Wind Z")#, icon='PLAY')        
+                col.prop(ob ,"modeling_cloth_turbulence", text="Turbulence")#, icon='PLAY')        
                 col.prop(ob ,"modeling_cloth_floor", text="Floor")#, icon='PLAY')        
                 col = layout.column(align=True)
                 col.scale_y = 1.5
