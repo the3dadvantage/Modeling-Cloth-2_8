@@ -132,7 +132,35 @@ def proxy_in_place(object):
     me.vertices.foreach_get('co', object.co.ravel())
     bpy.data.meshes.remove(me)
     object.co = apply_transforms(object.ob, object.co)
+
+
+def apply_rotation(object):
+    """When applying vectors such as normals we only need
+    to rotate"""
+    m = np.array(object.ob.matrix_world)
+    mat = m[:3, :3].T
+    object.v_normals = object.v_normals @ mat
     
+
+def proxy_v_normals_in_place(object):
+    """Overwrite vert coords with modifiers in world space"""
+    me = object.ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
+    me.vertices.foreach_get('normal', object.v_normals.ravel())
+    bpy.data.meshes.remove(me)
+    apply_rotation(object)
+
+
+def proxy_v_normals(ob):
+    """Overwrite vert coords with modifiers in world space"""
+    me = ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
+    arr = np.zeros(len(me.vertices) * 3, dtype=np.float32)
+    me.vertices.foreach_get('normal', arr)
+    arr.shape = (arr.shape[0] //3, 3)
+    bpy.data.meshes.remove(me)
+    m = np.array(ob.matrix_world, dtype=np.float32)    
+    mat = m[:3, :3].T # rotates backwards without T
+    return arr @ mat
+
 
 def apply_transforms(ob, co):
     """Get vert coords in world space"""
@@ -577,10 +605,16 @@ def reset_shapes(ob=None):
 def get_spring_mix(ob, eidx):
     rs = []
     ls = []
+    minrl = []
     for i in eidx:
-        rs.append(eidx[eidx == i[1]].shape[0])
-        ls.append(eidx[eidx == i[0]].shape[0])
-    mix = 1 / np.array(rs + ls)
+        r = eidx[eidx == i[1]].shape[0]
+        l = eidx[eidx == i[0]].shape[0]
+        rs.append (min(r,l))
+        ls.append (min(r,l))
+    mix = 1 / np.array(rs + ls) ** 1.2
+    #mix2 = 1 / np.array(rs + ls)
+    #print(mix.shape, "mix shape")
+    
     return mix
         
 
@@ -629,6 +663,9 @@ def create_instance(new=True):
         cloth.hook_list = [] # these will be moved by hooks and updated to the engine
         cloth.virtual_springs = np.empty((0,2), dtype=np.int32) # so we can attach points to each other without regard to topology
         cloth.sew_springs = [] # edges with no faces attached can be set to shrink
+        
+        ###cloth.col_idx = np.empty(0, dtype=np.int32)
+        ###cloth.collide_list = np.empty(0, dtype=np.int32)
     
     else: # if we set a modeling cloth object and have something else selected, the most recent object will still have it's settings expose in the ui
         ob = get_last_object()[1]
@@ -724,8 +761,8 @@ def create_instance(new=True):
     cloth.mix = (1/uni[2][uni[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
 
     # this helps with extra springs behaving as if they had more mass---->>>
-    #cloth.mix = mixology[unpinned][:, nax]
-    cloth.mix = (cloth.mix ** .777) / 7
+    cloth.mix = mixology[unpinned][:, nax]
+    #cloth.mix = (cloth.mix ** .87) * 0.35
     # -------------->>>
     
     self_col = cloth.ob.modeling_cloth_self_collision
@@ -785,8 +822,18 @@ def run_handler(cloth):
             cloth.vel_start[:] = co
             force = cloth.ob.modeling_cloth_spring_force
             mix = cloth.mix * force
-            for x in range(cloth.ob.modeling_cloth_iterations):    
 
+            #if cloth.clicked: # for the grab tool
+                #grab = np.array([extra_data['stored_vidx'][v] + extra_data['move'] for v in range(len(extra_data['vidx']))])
+                #grab_idx = extra_data['vidx']    
+                    #loc = extra_data['stored_vidx'][v] + extra_data['move']
+
+            for x in range(cloth.ob.modeling_cloth_iterations):    
+                
+                grav = cloth.ob.modeling_cloth_gravity * (.01 / cloth.ob.modeling_cloth_iterations)
+                co[cloth.pindexer] += revert_rotation(cloth.ob, np.array([0, 0, grav]))                
+                
+                
                 # add pull
                 vecs = co[eidx[:, 1]] - co[eidx[:, 0]]
                 dots = np.einsum('ij,ij->i', vecs, vecs)
@@ -804,9 +851,20 @@ def run_handler(cloth):
                 #tiled_move = np.append(move, -move, axis=0)[cloth.unpinned] * new_mix # * mix for stability: force multiplied by 1/number of springs
                 np.add.at(cloth.co, cloth.eidx_tiler, tiled_move)
                 
+                ###if cloth.ob.modeling_cloth_object_detect:
+                    ###if cloth.collide_list.shape[0] > 0:
+                        ###cloth.co[cloth.col_idx] = cloth.collide_list
+                
                 if len(cloth.pin_list) > 0:
                     hook_co = np.array([cloth.ob.matrix_world.inverted() * i.matrix_world.to_translation() for i in cloth.hook_list])
                     cloth.co[cloth.pin_list] = hook_co
+
+                if cloth.clicked: # for the grab tool
+                    cloth.co[extra_data['vidx']] = np.array(extra_data['stored_vidx']) + np.array(+ extra_data['move'])   
+                        #loc = extra_data['stored_vidx'][v] + extra_data['move']
+                        #cloth.co[extra_data['vidx'][v]] = loc            
+                        #cloth.vel[extra_data['vidx'][v]] *= 0
+
 
             if cloth.ob.modeling_cloth_sew != 0:
                 if len(cloth.sew_edges) > 0:
@@ -853,10 +911,7 @@ def run_handler(cloth):
             # !!! ------------------
 
             vel_dif = cloth.co - cloth.vel_start
-            
-            
-            
-            cloth.vel += vel_dif            
+            cloth.vel += vel_dif * 2            
         
             # higher speed = mor drag test
             # The amount of drage increases with speed. 
@@ -999,12 +1054,11 @@ def run_handler(cloth):
             if inflate != 0:
                 cloth.v_normals *= inflate
                 cloth.vel += cloth.v_normals            
-            
 
                 
             #cloth.vel[:,2][cloth.pindexer] += cloth.ob.modeling_cloth_gravity * .01
-            grav = cloth.ob.modeling_cloth_gravity * .01
-            cloth.vel[cloth.pindexer] += revert_rotation(cloth.ob, np.array([0, 0, grav]))
+            #grav = cloth.ob.modeling_cloth_gravity * .01
+            #cloth.vel[cloth.pindexer] += revert_rotation(cloth.ob, np.array([0, 0, grav]))
             
             #cloth.vel *= cloth.ob.modeling_cloth_velocity
             co[cloth.pindexer] += cloth.vel[cloth.pindexer]
@@ -1013,11 +1067,14 @@ def run_handler(cloth):
                 cloth.co[cloth.pin_list] = hook_co
                 cloth.vel[cloth.pin_list] = 0
             
+            
             if cloth.clicked: # for the grab tool
-                for v in range(len(extra_data['vidx'])):   
-                    loc = extra_data['stored_vidx'][v] + extra_data['move']
-                    cloth.co[extra_data['vidx'][v]] = loc            
-                    cloth.vel[extra_data['vidx'][v]] *= 0
+                cloth.co[extra_data['vidx']] = np.array(extra_data['stored_vidx']) + np.array(+ extra_data['move'])            
+            #if cloth.clicked: # for the grab tool
+            #    for v in range(len(extra_data['vidx'])):   
+            #        loc = extra_data['stored_vidx'][v] + extra_data['move']
+            #        cloth.co[extra_data['vidx'][v]] = loc            
+            #        cloth.vel[extra_data['vidx'][v]] *= 0
 
             cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].data.foreach_set('co', cloth.co.ravel())
             cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].mute = True
@@ -1033,7 +1090,7 @@ def bounds_check(co1, co2, fudge):
     co1_min = np.min(co1, axis=0)
     co2_max = np.max(co2, axis=0)
 
-    if np.all(co2_max > co1_min - fudge):
+    if np.all(co2_max + fudge > co1_min):
         co1_max = np.max(co1, axis=0)
         co2_min = np.min(co2, axis=0)        
         
@@ -1048,14 +1105,14 @@ def triangle_bounds_check(co, tri_co, co_min, co_max, idxer, fudge):
     intersect the bounds of the object"""
 
     # min check cull step 1
-    tri_min = np.min(tri_co, axis=1)
-    check_min = co_max > tri_min - fudge
+    tri_min = np.min(tri_co, axis=1) - fudge
+    check_min = co_max > tri_min
     in_min = np.all(check_min, axis=1)
     
     # max check cull step 2
     idx = idxer[in_min]
-    tri_max = np.max(tri_co[in_min], axis=1)
-    check_max = tri_max > co_min - fudge
+    tri_max = np.max(tri_co[in_min], axis=1) + fudge
+    check_max = tri_max > co_min
     in_max = np.all(check_max, axis=1)
     in_min[idx[~in_max]] = False
     
@@ -1067,21 +1124,21 @@ def tri_back_check(co, tri_min, tri_max, idxer, fudge):
     intersect the bounds of the culled triangles"""
 
     # min check cull step 1
-    tb_min = np.min(tri_min, axis=0)
-    check_min = co > tb_min - fudge    
+    tb_min = np.min(tri_min, axis=0) - fudge
+    check_min = co > tb_min
     in_min = np.all(check_min, axis=1)
     idx = idxer[in_min]
     
     # max check cull step 2
-    tb_max = np.max(tri_max, axis=0)
-    check_max = co[in_min] < tb_max + fudge
+    tb_max = np.max(tri_max, axis=0) + fudge
+    check_max = co[in_min] < tb_max
     in_max = np.all(check_max, axis=1)        
     in_min[idx[~in_max]] = False    
     
     return in_min 
     
 
-def v_per_tri(co, tri_co, tri_min, tri_max, idxer, tridexer):
+def v_per_tri(co, tri_min, tri_max, idxer, tridexer):
     """Checks each point against the bounding box of each triangle"""
     
     c_peat = np.repeat(np.arange(idxer.shape[0]), tridexer.shape[0])
@@ -1138,7 +1195,7 @@ def v_per_tri(co, tri_co, tri_min, tri_max, idxer, tridexer):
     return idxer[c_peat], t_peat
 
 
-def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin, outer_margin):
+def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin):
     idxer = np.arange(in_margin.shape[0])[in_margin]
     
     r_co = co[cidx[in_margin]]    
@@ -1157,26 +1214,33 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
     div = 1 / (d00 * d11 - d01 * d01)
     u = (d11 * d02 - d01 * d12) * div
     v = (d00 * d12 - d01 * d02) * div
-    check = (u > -0.05) & (v > -0.05) & (u + v < 1.05)
+    check = (u > -0) & (v > -0) & (u + v < 1)
     in_margin[idxer] = check
 
 
 def object_collide(cloth, object):
-    
+    ###hits = False
+    ###cloth.col_idx = np.empty(0, dtype=np.int32)
+    ###cloth.collide_list = np.empty(0, dtype=np.int32)
     # get transforms in world space:
     proxy_in_place(object)
     apply_in_place(cloth.ob, cloth.co, cloth)
     
     inner_margin = object.ob.modeling_cloth_inner_margin
     outer_margin = object.ob.modeling_cloth_outer_margin
-    fudge = max(inner_margin, outer_margin) * 2
+    fudge = max(inner_margin, outer_margin) #* 4
+    #fudge = outer_margin# * 2
     
     # check object bounds: (need inner and out margins to adjust box size)
     box_check, co1_min, co1_max = bounds_check(cloth.co, object.co, fudge)
 
     # check for triangles inside the cloth bounds
     if box_check:
+        proxy_v_normals_in_place(object)
+        #marginalized = object.co + object.v_normals * outer_margin
+        #in_marginalized = object.co - object.v_normals * inner_margin
         tri_co = object.co[object.tridex]
+        #tri_in = in_marginalized[object.tridex]
         # tri vel
         tri_vo = object.vel[object.tridex]
         tris_in, tri_min, tri_max = triangle_bounds_check(cloth.co, tri_co, co1_min, co1_max, object.tridexer, fudge)
@@ -1189,55 +1253,75 @@ def object_collide(cloth, object):
             # begin every vertex co against every tri
             if np.any(back_check):
                 # update the normals. cross_vecs used by barycentric tri check
-                tri_normals_in_place(object, tri_co)
+                #marginalized = object.co + object.v_normals * outer_margin
+                #tri_normals_in_place(object, marginalized[object.tridex])
                 # add normals to make extruded tris
-                norms_2 = object.normals[tris_in]
-                u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
+                #norms_2 = object.normals[tris_in]
+                #u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
                 
-                s1 = tri_co_2.shape[0]
+                #s1 = tri_co_2.shape[0]
                 
-                extruded_min = tri_min - u_norms * inner_margin
-                extruded_max = tri_max + u_norms * outer_margin
+                #extruded_min = tri_min - u_norms * (inner_margin + outer_margin)
+                #extruded_max = tri_max# + u_norms * outer_margin
                 
                 # test --------- !!!!!!!
-                extruded_max += fudge # makes the starting bounding boxes larger
-                extruded_min -= fudge
+                #extruded_max += fudge # makes the starting bounding boxes larger
+                #extruded_min -= fudge# * 2
                 # !!! here is where I will have to fudge to make sure boxes are big
                 #   enough to include triangle check margins.
                 # !!! outer margins will also have spaces where convex planes meet
 
                 
-                v_tris = v_per_tri(cloth.co[back_check], tri_co_2, extruded_min, extruded_max, cloth.idxer[back_check], object.tridexer[tris_in])
+                v_tris = v_per_tri(cloth.co[back_check], tri_min - fudge, tri_max + fudge, cloth.idxer[back_check], object.tridexer[tris_in])
                 if v_tris is not None:
+                    
+                    # update the normals. cross_vecs used by barycentric tri check
+                    marginalized = (object.co + object.v_normals * outer_margin)[object.tridex]
+                    tri_normals_in_place(object, marginalized)
+                    # add normals to make extruded tris
+                    norms_2 = object.normals[tris_in]
+                    u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
+                                        
                     cidx, tidx = v_tris
                     ori = object.origins[tris_in][tidx]
                     nor = u_norms[tidx]
                     vec2 = cloth.co[cidx] - ori
                     
                     d = np.einsum('ij, ij->i', nor, vec2) # nor is unit norms
-                    in_margin = (d > -inner_margin) & (d < outer_margin)
+                    in_margin = (d > -inner_margin) & (d < 0)#< outer_margin)
                     
                     # <<<--- Inside triangle check --->>>
                     # will overwrite in_margin:
                     cross_2 = object.cross_vecs[tris_in][tidx][in_margin]
-                    inside_triangles(cross_2, vec2[in_margin], cloth.co, tri_co_2, cidx, tidx, nor, ori, in_margin, outer_margin)
+                    inside_triangles(cross_2, vec2[in_margin], cloth.co, marginalized[tris_in], cidx, tidx, nor, ori, in_margin)
+                    print(tri_co_2.shape, marginalized[tris_in].shape)
                     
-                    # collision response --------------------------->>>
-                    tri_vo = tri_vo[tris_in]
-                    tri_vel1 = np.mean(tri_co_2[tidx[in_margin]], axis=1)
-                    tri_vel2 = np.mean(tri_vo[tidx[in_margin]], axis=1)
-                    tvel = tri_vel1 - tri_vel2
                     
-                    cloth.co[cidx[in_margin]] -= nor[in_margin] * (d[in_margin] - outer_margin)[:, nax]
-                    cloth.vel[cidx[in_margin]] = tvel
-                    object.vel[:] = object.co
-                    
+                    if np.any(in_margin):
+                        # collision response --------------------------->>>
+                        tri_vo = tri_vo[tris_in]
+                        tri_vel1 = np.mean(tri_co_2[tidx[in_margin]], axis=1)
+                        tri_vel2 = np.mean(tri_vo[tidx[in_margin]], axis=1)
+                        tvel = tri_vel1 - tri_vel2
+                        
+                        
+                        col_idx = cidx[in_margin] 
+                        #cloth.co[col_idx] -= nor[in_margin] * (d[in_margin] - outer_margin)[:, nax]
+                        cloth.co[col_idx] -= nor[in_margin] * (d[in_margin])[:, nax]
+                        cloth.vel[col_idx] = tvel
+                        object.vel[:] = object.co                    
+
+                        # when iterating springs, we keep putting the collided points back
+                        ###cloth.col_idx = col_idx
+                        ###cloth.collide_list = cloth.co[col_idx]
+                        ###hits = True                    
                 # could use the mean of the original trianlge to determine which face
                 #   to collide with when there are multiples. So closest mean gets used.
 
     
     revert_in_place(cloth.ob, cloth.co)
-
+    ###if hits:
+        ###cloth.collide_list = cloth.co[col_idx]
 
 # update functions --------------------->>>    
 
@@ -1247,14 +1331,17 @@ class Collider(object):
 
 
 def create_collider():
+    # maybe fixed? !!! bug where first frame of collide uses empty data. Stuff goes flying.
     col = Collider()
     col.ob = bpy.context.object
     col.co = get_proxy_co(col.ob, None)
-    col.vel = np.copy(col.co)
+    col.v_normals = proxy_v_normals(col.ob)
+    col.vel = np.zeros_like(col.co)
     col.tridex = triangulate(col.ob)
     col.tridexer = np.arange(col.tridex.shape[0])
     # cross_vecs used later by barycentric tri check
-    col.cross_vecs, col.origins, col.normals = get_tri_normals(col.co[col.tridex])    
+    marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
+    col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
     
     return col
 
