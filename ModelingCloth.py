@@ -842,6 +842,11 @@ def run_handler(cloth):
                 move = vecs - swap
                 # pull only test--->>>
                 #move[div > 1] = 0
+                push = cloth.ob.modeling_cloth_push_springs
+                if push == 0:
+                    move[div > 1] = 0
+                else:
+                    move[div > 1] *= push
                 # pull only test--->>>
                 
                 tiled_move = np.append(move, -move, axis=0)[cloth.unpinned] * mix # * mix for stability: force multiplied by 1/number of springs
@@ -1294,7 +1299,6 @@ def object_collide(cloth, object):
                     # will overwrite in_margin:
                     cross_2 = object.cross_vecs[tris_in][tidx][in_margin]
                     inside_triangles(cross_2, vec2[in_margin], cloth.co, marginalized[tris_in], cidx, tidx, nor, ori, in_margin)
-                    print(tri_co_2.shape, marginalized[tris_in].shape)
                     
                     
                     if np.any(in_margin):
@@ -1959,9 +1963,15 @@ def create_properties():
         description="Multiply the noise by this value each iteration", 
         default=0.99, precision=4, min=0, max=1)#, update=refresh_noise_decay)
 
+    # spring forces ------------>>>
     bpy.types.Object.modeling_cloth_spring_force = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=4, precision=4, min=0, max=10)#, update=refresh_noise)
+        default=1.2, precision=4, min=0, max=10)#, update=refresh_noise)
+
+    bpy.types.Object.modeling_cloth_push_springs = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
+        description="Set the spring force", 
+        default=0.2, precision=4, min=0, max=2)#, update=refresh_noise)
+    # -------------------------->>>
 
     bpy.types.Object.modeling_cloth_gravity = bpy.props.FloatProperty(name="Modeling Cloth Gravity", 
         description="Modeling cloth gravity", 
@@ -2122,6 +2132,7 @@ class ModelingClothPanel(bpy.types.Panel):
                         
                     col.prop(ob ,"modeling_cloth_iterations", text="Iterations")#, icon='OUTLINER_OB_LATTICE')               
                     col.prop(ob ,"modeling_cloth_spring_force", text="Stiffness")#, icon='OUTLINER_OB_LATTICE')               
+                    col.prop(ob ,"modeling_cloth_push_springs", text="Push Springs")#, icon='OUTLINER_OB_LATTICE')               
                     col.prop(ob ,"modeling_cloth_noise", text="Noise")#, icon='PLAY')               
                     col.prop(ob ,"modeling_cloth_noise_decay", text="Decay Noise")#, icon='PLAY')               
                     col.prop(ob ,"modeling_cloth_gravity", text="Gravity")#, icon='PLAY')        
