@@ -594,7 +594,7 @@ def reset_shapes(ob=None):
     keys['modeling cloth key'].data.foreach_set('co', co)
     
     # reset the data stored in the class
-    data[ob.name].vel = 0
+    data[ob.name].vel[:] = 0
     co.shape = (co.shape[0]//3, 3)
     data[ob.name].co = co
     
@@ -758,11 +758,11 @@ def create_instance(new=True):
     
     uni = np.unique(cloth.eidx_tiler, return_inverse=True, return_counts=True)
 
-    cloth.mix = (1/uni[2][uni[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
+    #cloth.mix = (1/uni[2][uni[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
 
     # this helps with extra springs behaving as if they had more mass---->>>
     cloth.mix = mixology[unpinned][:, nax]
-    #cloth.mix = (cloth.mix ** .87) * 0.35
+    cloth.mix = (cloth.mix ** .87) * 0.35
     # -------------->>>
     
     self_col = cloth.ob.modeling_cloth_self_collision
@@ -1219,7 +1219,7 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
     div = 1 / (d00 * d11 - d01 * d01)
     u = (d11 * d02 - d01 * d12) * div
     v = (d00 * d12 - d01 * d02) * div
-    check = (u > -0) & (v > -0) & (u + v < 1)
+    check = (u > -.01) & (v > -.01) & (u + v < 1.01)
     in_margin[idxer] = check
 
 
@@ -1233,7 +1233,7 @@ def object_collide(cloth, object):
     
     inner_margin = object.ob.modeling_cloth_inner_margin
     outer_margin = object.ob.modeling_cloth_outer_margin
-    fudge = max(inner_margin, outer_margin) #* 4
+    fudge = max(inner_margin, outer_margin) * 2
     #fudge = outer_margin# * 2
     
     # check object bounds: (need inner and out margins to adjust box size)
@@ -1242,10 +1242,8 @@ def object_collide(cloth, object):
     # check for triangles inside the cloth bounds
     if box_check:
         proxy_v_normals_in_place(object)
-        #marginalized = object.co + object.v_normals * outer_margin
-        #in_marginalized = object.co - object.v_normals * inner_margin
         tri_co = object.co[object.tridex]
-        #tri_in = in_marginalized[object.tridex]
+
         # tri vel
         tri_vo = object.vel[object.tridex]
         tris_in, tri_min, tri_max = triangle_bounds_check(cloth.co, tri_co, co1_min, co1_max, object.tridexer, fudge)
@@ -1257,30 +1255,11 @@ def object_collide(cloth, object):
     
             # begin every vertex co against every tri
             if np.any(back_check):
-                # update the normals. cross_vecs used by barycentric tri check
-                #marginalized = object.co + object.v_normals * outer_margin
-                #tri_normals_in_place(object, marginalized[object.tridex])
-                # add normals to make extruded tris
-                #norms_2 = object.normals[tris_in]
-                #u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
-                
-                #s1 = tri_co_2.shape[0]
-                
-                #extruded_min = tri_min - u_norms * (inner_margin + outer_margin)
-                #extruded_max = tri_max# + u_norms * outer_margin
-                
-                # test --------- !!!!!!!
-                #extruded_max += fudge # makes the starting bounding boxes larger
-                #extruded_min -= fudge# * 2
-                # !!! here is where I will have to fudge to make sure boxes are big
-                #   enough to include triangle check margins.
-                # !!! outer margins will also have spaces where convex planes meet
-
-                
                 v_tris = v_per_tri(cloth.co[back_check], tri_min - fudge, tri_max + fudge, cloth.idxer[back_check], object.tridexer[tris_in])
+
                 if v_tris is not None:
-                    
                     # update the normals. cross_vecs used by barycentric tri check
+                    # move the surface along the vertex normals by the outer margin distance
                     marginalized = (object.co + object.v_normals * outer_margin)[object.tridex]
                     tri_normals_in_place(object, marginalized)
                     # add normals to make extruded tris
@@ -1339,14 +1318,16 @@ def create_collider():
     col = Collider()
     col.ob = bpy.context.object
     col.co = get_proxy_co(col.ob, None)
+    proxy_in_place(col)
     col.v_normals = proxy_v_normals(col.ob)
     col.vel = np.zeros_like(col.co)
     col.tridex = triangulate(col.ob)
     col.tridexer = np.arange(col.tridex.shape[0])
     # cross_vecs used later by barycentric tri check
+    proxy_v_normals_in_place(col)
     marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
     col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
-    
+
     return col
 
 
