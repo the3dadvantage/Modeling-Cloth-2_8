@@ -1219,7 +1219,7 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
     div = 1 / (d00 * d11 - d01 * d01)
     u = (d11 * d02 - d01 * d12) * div
     v = (d00 * d12 - d01 * d02) * div
-    check = (u > -.01) & (v > -.01) & (u + v < 1.01)
+    check = (u > -.2) & (v > -.2) & (u + v < 1.2)
     in_margin[idxer] = check
 
 
@@ -1233,7 +1233,7 @@ def object_collide(cloth, object):
     
     inner_margin = object.ob.modeling_cloth_inner_margin
     outer_margin = object.ob.modeling_cloth_outer_margin
-    fudge = max(inner_margin, outer_margin) * 2
+    fudge = max(inner_margin, outer_margin)
     #fudge = outer_margin# * 2
     
     # check object bounds: (need inner and out margins to adjust box size)
@@ -1289,9 +1289,11 @@ def object_collide(cloth, object):
                         
                         
                         col_idx = cidx[in_margin] 
-                        #cloth.co[col_idx] -= nor[in_margin] * (d[in_margin] - outer_margin)[:, nax]
+                        #u, ind = np.unique(col_idx, True)
                         cloth.co[col_idx] -= nor[in_margin] * (d[in_margin])[:, nax]
+                        #cloth.co[u] -= nor[in_margin][ind] * (d[in_margin][ind])[:, nax]
                         cloth.vel[col_idx] = tvel
+                        #cloth.vel[u] = tvel[ind]
                         object.vel[:] = object.co                    
 
                         # when iterating springs, we keep putting the collided points back
@@ -1320,7 +1322,7 @@ def create_collider():
     col.co = get_proxy_co(col.ob, None)
     proxy_in_place(col)
     col.v_normals = proxy_v_normals(col.ob)
-    col.vel = np.zeros_like(col.co)
+    col.vel = np.copy(col.co)
     col.tridex = triangulate(col.ob)
     col.tridexer = np.arange(col.tridex.shape[0])
     # cross_vecs used later by barycentric tri check
@@ -2286,3 +2288,4 @@ if __name__ == "__main__":
     for i in bpy.app.handlers.scene_update_post:
         if i.__name__ == 'handler_scene':
             bpy.app.handlers.scene_update_post.remove(i)            
+
