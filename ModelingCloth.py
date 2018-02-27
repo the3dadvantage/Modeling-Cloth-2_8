@@ -1219,7 +1219,7 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
     div = 1 / (d00 * d11 - d01 * d01)
     u = (d11 * d02 - d01 * d12) * div
     v = (d00 * d12 - d01 * d02) * div
-    check = (u > -.2) & (v > -.2) & (u + v < 1.2)
+    check = (u > 0) & (v > 0) & (u + v < 1)
     in_margin[idxer] = check
 
 
@@ -1293,6 +1293,7 @@ def object_collide(cloth, object):
                         cloth.co[col_idx] -= nor[in_margin] * (d[in_margin])[:, nax]
                         #cloth.co[u] -= nor[in_margin][ind] * (d[in_margin][ind])[:, nax]
                         cloth.vel[col_idx] = tvel
+                        #cloth.vel[col_idx] = 0
                         #cloth.vel[u] = tvel[ind]
                         object.vel[:] = object.co                    
 
@@ -1302,7 +1303,6 @@ def object_collide(cloth, object):
                         ###hits = True                    
                 # could use the mean of the original trianlge to determine which face
                 #   to collide with when there are multiples. So closest mean gets used.
-
     
     revert_in_place(cloth.ob, cloth.co)
     ###if hits:
@@ -1337,16 +1337,32 @@ def create_collider():
 def collision_object_update(self, context):
     """Updates the collider object"""    
     collide = self.modeling_cloth_object_collision
+    print(collide, "this is the collide state")
+    # remove objects from dict if deleted
+    cull_list = []
+    if 'colliders' in extra_data:
+        if extra_data['colliders'] is not None:   
+            for i in extra_data['colliders']:
+                remove = True
+                if i in bpy.data.objects:
+                    if bpy.data.objects[i].type == "MESH":
+                        if bpy.data.objects[i].modeling_cloth_object_collision:
+                            remove = False
+                if remove:
+                    cull_list.append(i)
+    for i in cull_list:
+        del(extra_data['colliders'][i])
+        
     
     # remove if false
-    if not collide:
-        if 'colliders' in extra_data:
-            if extra_data['colliders'] is not None:    
-                if self.name in extra_data['colliders']:
-                    del(extra_data['colliders'][self.name])
-                    if len(extra_data['colliders']) == 0:
-                        extra_data['colliders'] = None
-        return
+    #if not collide:
+        #if 'colliders' in extra_data:
+            #if extra_data['colliders'] is not None:    
+                #if self.name in extra_data['colliders']:
+                    #del(extra_data['colliders'][self.name])
+                    #if len(extra_data['colliders']) == 0:
+                        #extra_data['colliders'] = None
+        #return
     
     # add class to dict if true.
     if 'colliders' not in extra_data:    
@@ -1949,7 +1965,7 @@ def create_properties():
     # spring forces ------------>>>
     bpy.types.Object.modeling_cloth_spring_force = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=1.2, precision=4, min=0, max=10)#, update=refresh_noise)
+        default=3, precision=4, min=0, max=10)#, update=refresh_noise)
 
     bpy.types.Object.modeling_cloth_push_springs = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
@@ -1962,7 +1978,7 @@ def create_properties():
 
     bpy.types.Object.modeling_cloth_iterations = bpy.props.IntProperty(name="Stiffness", 
         description="How stiff the cloth is", 
-        default=1, min=1, max=50)#, update=refresh_noise_decay)
+        default=4, min=1, max=500)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_velocity = bpy.props.FloatProperty(name="Velocity", 
         description="Cloth keeps moving", 
@@ -2288,4 +2304,3 @@ if __name__ == "__main__":
     for i in bpy.app.handlers.scene_update_post:
         if i.__name__ == 'handler_scene':
             bpy.app.handlers.scene_update_post.remove(i)            
-
