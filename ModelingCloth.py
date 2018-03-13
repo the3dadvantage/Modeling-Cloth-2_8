@@ -482,7 +482,10 @@ def add_virtual_springs(remove=False):
         return
 
     existing = np.append(cloth.eidx, cloth.virtual_springs, axis=0)
+    flip = existing[:, ::-1]
+    existing = np.append(existing, flip, axis=0)
     ls = existing[:,0]
+        
     springs = []
     for i in idxer[sel]:
 
@@ -490,7 +493,7 @@ def add_virtual_springs(remove=False):
         # where this vert occurs on the left side of the existing spring list
         v_in = existing[i == ls]
         v_in_r = v_in[:,1]
-        not_in = selected[-np.in1d(selected, v_in_r)]
+        not_in = selected[~np.in1d(selected, v_in_r)]
         idx_set = not_in[not_in != i]
         for sv in idx_set:
             springs.append([i, sv])
@@ -755,15 +758,13 @@ def create_instance(new=True):
     cloth.waiting = False
     cloth.clicked = False # for the grab tool
     
-    #print(cloth.eidx_tiler.shape, 'this is my tiler')
-    
     uni = np.unique(cloth.eidx_tiler, return_inverse=True, return_counts=True)
 
     #cloth.mix = (1/uni[2][uni[1]])[:, nax].astype(np.float32) # force gets divided by number of springs
 
     # this helps with extra springs behaving as if they had more mass---->>>
     cloth.mix = mixology[unpinned][:, nax]
-    cloth.mix = (cloth.mix ** .87) * 0.35
+    #cloth.mix = (cloth.mix ** .87) * 0.35
     # -------------->>>
 
     # new self collisions:
@@ -839,6 +840,9 @@ def run_handler(cloth):
             co[cloth.pindexer] += cloth.noise[cloth.pindexer]
             cloth.noise *= cloth.ob.modeling_cloth_noise_decay
 
+            # mix in vel before collisions and sewing
+            co[cloth.pindexer] += cloth.vel[cloth.pindexer]
+
             cloth.vel_start[:] = co
             force = cloth.ob.modeling_cloth_spring_force
             mix = cloth.mix * force
@@ -883,7 +887,7 @@ def run_handler(cloth):
                 # grab inside spring iterations
                 if cloth.clicked: # for the grab tool
                     cloth.co[extra_data['vidx']] = np.array(extra_data['stored_vidx']) + np.array(+ extra_data['move'])   
-
+            
             spring_dif = cloth.co - cloth.vel_start
             grav = cloth.ob.modeling_cloth_gravity * (.01 / cloth.ob.modeling_cloth_iterations)
             cloth.vel += revert_rotation(cloth.ob, np.array([0, 0, grav]))
@@ -922,9 +926,6 @@ def run_handler(cloth):
             squared_move_dist += 1
             cloth.vel *= (1 / (squared_move_dist / cloth.ob.modeling_cloth_velocity))[:, nax]
             
-            # mix in vel before collisions and sewing
-            co[cloth.pindexer] += cloth.vel[cloth.pindexer]
-
             # old self collisions
             self_col = cloth.ob.modeling_cloth_self_collision
 
@@ -2024,20 +2025,20 @@ def create_properties():
     # spring forces ------------>>>
     bpy.types.Object.modeling_cloth_spring_force = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=3, precision=4, min=0, max=10)#, update=refresh_noise)
+        default=1, precision=4, min=0, max=1.5)#, update=refresh_noise)
 
     bpy.types.Object.modeling_cloth_push_springs = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=0.2, precision=4, min=0, max=2)#, update=refresh_noise)
+        default=0.2, precision=4, min=0, max=1.5)#, update=refresh_noise)
     # -------------------------->>>
 
     bpy.types.Object.modeling_cloth_gravity = bpy.props.FloatProperty(name="Modeling Cloth Gravity", 
         description="Modeling cloth gravity", 
-        default=0.0, precision=4, min= -1, max=1)#, update=refresh_noise_decay)
+        default=0.0, precision=4, min= -10, max=10)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_iterations = bpy.props.IntProperty(name="Stiffness", 
         description="How stiff the cloth is", 
-        default=4, min=1, max=500)#, update=refresh_noise_decay)
+        default=2, min=1, max=500)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_velocity = bpy.props.FloatProperty(name="Velocity", 
         description="Cloth keeps moving", 
