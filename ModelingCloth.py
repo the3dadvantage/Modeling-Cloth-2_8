@@ -1033,7 +1033,7 @@ def run_handler(cloth):
             #cloth.co = co
             
             # objects ---
-            T = time.time()
+            #T = time.time()
             if cloth.ob.modeling_cloth_object_detect:
                 if extra_data['colliders'] is not None:
                     for i, val in extra_data['colliders'].items():
@@ -1041,15 +1041,15 @@ def run_handler(cloth):
                             self_collide(cloth, val)
                         else:    
                             object_collide(cloth, val)
-            print(time.time()-T, "the whole enchalada")
+            #print(time.time()-T, "the whole enchalada")
             # objects ---
 
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
                 cloth.vel[cloth.pin_list] = 0
 
-
-            #cloth.co = co
+            if cloth.clicked: # for the grab tool
+                cloth.co[extra_data['vidx']] = np.array(extra_data['stored_vidx']) + np.array(+ extra_data['move'])
             
             cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].data.foreach_set('co', cloth.co.ravel())
             cloth.ob.data.shape_keys.key_blocks['modeling cloth key'].mute = True
