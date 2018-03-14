@@ -908,7 +908,7 @@ def run_handler(cloth):
                 cloth.v_normals *= inflate
                 cloth.vel += cloth.v_normals
 
-            
+            #cloth.vel += spring_dif * 4                    
             # inextensible calc:
             ab_dot = np.einsum('ij, ij->i', cloth.vel, spring_dif)
             aa_dot = np.einsum('ij, ij->i', spring_dif, spring_dif)
@@ -917,10 +917,9 @@ def run_handler(cloth):
             cloth.vel -= np.nan_to_num(cp)
             cloth.vel += (spring_dif + cp)
             
-            
-            cloth.vel += spring_dif# * 4        
+            cloth.vel += spring_dif        
 
-            # The amount of drage increases with speed. 
+            # The amount of drag increases with speed. 
             # have to converto to a range between 0 and 1
             squared_move_dist = np.einsum("ij, ij->i", cloth.vel, cloth.vel)
             squared_move_dist += 1
@@ -1034,7 +1033,7 @@ def run_handler(cloth):
             #cloth.co = co
             
             # objects ---
-            #T = time.time()
+            T = time.time()
             if cloth.ob.modeling_cloth_object_detect:
                 if extra_data['colliders'] is not None:
                     for i, val in extra_data['colliders'].items():
@@ -1042,7 +1041,8 @@ def run_handler(cloth):
                             self_collide(cloth, val)
                         else:    
                             object_collide(cloth, val)
-            #print(time.time()-T, "the whole enchalada")
+            print(time.time()-T, "the whole enchalada")
+            #print(x)
             # objects ---
 
             if len(cloth.pin_list) > 0:
@@ -1253,11 +1253,14 @@ def object_collide(cloth, object):
                     
                     if np.any(in_margin):
                         # collision response --------------------------->>>
+                        # when we only compute the velocity for points that hit,
+                        # we get weird velocity vectors when moving in and out
+                        # of collision space
                         tri_vo = tri_vo[tris_in]
                         tri_vel1 = np.mean(tri_co_2[tidx[in_margin]], axis=1)
                         tri_vel2 = np.mean(tri_vo[tidx[in_margin]], axis=1)
                         tvel = tri_vel1 - tri_vel2
-                        
+                        tri_vo[:] = 0
                         
                         
                         
@@ -1268,19 +1271,96 @@ def object_collide(cloth, object):
                         cloth.vel[col_idx] = tvel
                         #cloth.vel[col_idx] = 0
                         #cloth.vel[u] = tvel[ind]
-                        object.vel[:] = object.co                    
                         # when iterating springs, we keep putting the collided points back
                         ###cloth.col_idx = col_idx
                         ###cloth.collide_list = cloth.co[col_idx]
                         ###hits = True                    
                 # could use the mean of the original trianlge to determine which face
                 #   to collide with when there are multiples. So closest mean gets used.
-    
+    object.vel[:] = object.co    
     revert_in_place(cloth.ob, cloth.co)
     ###if hits:
         ###cloth.collide_list = cloth.co[col_idx]
 
 # update functions --------------------->>>    
+
+
+
+def grid_sample(obj, tri_min, tri_max, box_count=10, offset=0.00001):
+    """divide mesh into grid and sample from each segment.
+    offset prevents boxes from excluding any verts"""
+
+    # I have to eliminate tris containing the vertex
+    # I have boxes containing verts
+    # I have min and max corners of each tri
+    # I have to check every tri whose bounding box intersects the box with the vert
+    # If a vert is in a box, all the tris containing it are in that box
+
+
+    ob = obj.ob
+    co = obj.co
+    #co = get_co(ob)
+    
+    # get bounding box corners
+    min = np.min(co, axis=0)
+    max = np.max(co, axis=0)
+    
+    # box count is based on largest dimension
+    dimensions = max - min
+    largest_dimension = np.max(dimensions)
+    box_size = largest_dimension / box_count
+    
+    # get box count for each axis
+    xyz_count = dimensions // box_size + 1 #(have to add one so we don't end up with zero boxes when the mesh is flat)
+    
+    # dynamic number of boxes on each axis:
+    box_dimensions = dimensions / xyz_count # each box is this size
+    
+    line_end = max - box_dimensions # we back up one from the last value
+    
+    x_line = np.linspace(min[0], line_end[0], num=xyz_count[0], dtype=np.float32)
+    y_line = np.linspace(min[1], line_end[1], num=xyz_count[1], dtype=np.float32)
+    z_line = np.linspace(min[2], line_end[2], num=xyz_count[2], dtype=np.float32)
+    
+    
+    idxer = np.arange(co.shape[0])
+    
+    # get x bools
+    x_grid = co[:, 0] - x_line[:,nax]
+    x_bools = (x_grid + offset > 0) & (x_grid - offset < box_dimensions[0])
+    cull_x_bools = x_bools[np.any(x_bools, axis=1)] # eliminate grid sections with nothing
+    xb = cull_x_bools
+
+    x_idx = np.tile(idxer, (xyz_count[0], 1))
+    
+    samples = []
+    
+    for boo in xb:
+        xidx = idxer[boo]
+        y_grid = co[boo][:, 1] - y_line[:,nax]
+        y_bools = (y_grid + offset > 0) & (y_grid - offset < box_dimensions[1])
+        cull_y_bools = y_bools[np.any(y_bools, axis=1)] # eliminate grid sections with nothing
+        yb = cull_y_bools
+        print(yb[0].shape, "++++++what's my shape here?")
+        print(yb[0][yb[0]].shape, "what's my shape here?")
+        for yboo in yb:
+            yidx = xidx[yboo]
+            z_grid = co[yidx][:, 2] - z_line[:,nax]
+            z_bools = (z_grid + offset > 0) & (z_grid - offset < box_dimensions[2])
+            cull_z_bools = z_bools[np.any(z_bools, axis=1)] # eliminate grid sections with nothing
+            zb = cull_z_bools        
+            for zboo in zb:
+                #samples.append(yidx[zboo][0])
+            
+                # !!! to use this for collisions !!!:
+                #if False:    
+                samples.extend([yidx[zboo].tolist()])
+    
+    
+    #print(samples[:10], "what are these?")
+    for i in samples[40]:
+        ob.data.vertices[i].select=True
+    return np.unique(samples) # if offset is zero we don't need unique... return samples
 
 
 def self_collide(cloth, object):
@@ -1300,10 +1380,12 @@ def self_collide(cloth, object):
     tri_max = np.max(tri_co, axis=1) + fudge
 
     T = time.time()
-    v_tris = v_per_tri(cloth.co, tri_min, tri_max, cloth.idxer, cloth.tridexer, cloth.c_peat, cloth.t_peat)
+    #
+    #v_tris = v_per_tri(cloth.co, tri_min, tri_max, cloth.idxer, cloth.tridexer, cloth.c_peat, cloth.t_peat)
+    x = grid_sample(cloth, tri_min, tri_max, box_count=10, offset=0.00001)
     print(time.time()-T, "time inside")
-    print(cloth.t_peat)
-    print(cloth.c_peat)
+    #print(cloth.t_peat)
+    #print(cloth.c_peat)
     
     
     return
