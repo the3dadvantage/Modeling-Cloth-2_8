@@ -908,7 +908,9 @@ def run_handler(cloth):
                             object_collide(cloth, val)
             #print(time.time()-T, "the whole enchalada")
             # objects ---
-
+            
+            cloth.co[~cloth.pindexer] = cloth.vel_start[~cloth.pindexer]
+            
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
                 cloth.vel[cloth.pin_list] = 0
@@ -1251,7 +1253,6 @@ def self_collide(cloth, object):
         
         d = np.einsum('ij, ij->i', nor, vec2) # nor is unit norms
         in_margin = (d > -margin) & (d < margin)
-        print(cidx.shape, tidx.shape)
         # <<<--- Inside triangle check --->>>
         # will overwrite in_margin:
         cross_2 = cloth.cross_vecs[tidx][in_margin]
