@@ -104,12 +104,15 @@ def triangulate(ob, me):
     obm = bmesh.new()
     obm.from_mesh(me)        
     bmesh.ops.triangulate(obm, faces=obm.faces)
-    obm.to_mesh(me)        
-    count = len(me.polygons)    
-    tri_idx = np.zeros(count * 3, dtype=np.int64)        
-    me.polygons.foreach_get('vertices', tri_idx)        
+    #obm.to_mesh(me)        
+    count = len(obm.faces)    
+    #tri_idx = np.zeros(count * 3, dtype=np.int32)        
+    #me.polygons.foreach_get('vertices', tri_idx)
+    tri_idx = np.array([[v.index for v in f.verts] for f in obm.faces])
+    
     obm.free()
-    return tri_idx.reshape(count, 3)
+    
+    return tri_idx#.reshape(count, 3)
 
 
 def tri_normals_in_place(object, tri_co):    
@@ -118,6 +121,8 @@ def tri_normals_in_place(object, tri_co):
     object.origins = tri_co[:,0]
     object.cross_vecs = tri_co[:,1:] - object.origins[:, nax]
     object.normals = np.cross(object.cross_vecs[:,0], object.cross_vecs[:,1])
+    object.nor_dots = np.einsum("ij, ij->i", object.normals, object.normals)
+    object.normals /= np.sqrt(object.nor_dots)[:, nax]
 
 
 def get_tri_normals(tr_co):
@@ -247,7 +252,7 @@ def get_poly_centers(ob, type=np.float32, mesh=None):
         ob.modifiers.foreach_set('show_render', ren_set)
         mod = True
     p_count = len(mesh.polygons)
-    center = np.zeros(p_count * 3)#, dtype=type)
+    center = np.zeros(p_count * 3, dtype=type)
     mesh.polygons.foreach_get('center', center)
     center.shape = (p_count, 3)
     if mod:
@@ -272,7 +277,7 @@ def get_poly_normals(ob, type=np.float32, mesh=None):
         ob.modifiers.foreach_set('show_render', ren_set)
         mod = True
     p_count = len(mesh.polygons)
-    normal = np.zeros(p_count * 3)#, dtype=type)
+    normal = np.zeros(p_count * 3, dtype=type)
     mesh.polygons.foreach_get('normal', normal)
     normal.shape = (p_count, 3)
     if mod:
@@ -573,19 +578,51 @@ def refresh_noise(self, context):
         data[self.name].noise = ((zeros + -0.5) * self.modeling_cloth_noise * 0.1)[:, nax]
 
 
-def generate_wind(wind_vec, ob, nor_arr, wind, vel):
+def generate_wind(wind_vec, cloth):
     """Maintains a wind array and adds it to the cloth vel"""    
-    wind *= 0.9
-    if np.any(wind_vec):
-        turb = ob.modeling_cloth_turbulence
-        w_vec = revert_rotation(ob, wind_vec)
-        wind += w_vec * (1 - np.random.random(nor_arr.shape) * -turb) 
-        
-        # only blow on verts facing the wind
-        perp = nor_arr @ w_vec 
-        wind *= np.abs(perp[:, nax])
-        vel += wind    
-        
+    
+    tri_nor = cloth.normals # non-unit calculated by tri_normals_in_place() per each triangle
+    w_vec = revert_rotation(cloth.ob, wind_vec)
+
+    turb = cloth.ob.modeling_cloth_turbulence    
+    if turb != 0: 
+        w_vec += np.random.random(3).astype(np.float32) * turb * np.mean(w_vec) * 4
+
+    # only blow on verts facing the wind
+    perp = np.abs(tri_nor @ w_vec)
+    cloth.wind += w_vec
+    cloth.wind *= perp[:, nax][:, nax]
+    
+    # reshape for add.at
+    shape = cloth.wind.shape
+    cloth.wind.shape = (shape[0] * 3, 3)
+    
+    cloth.wind *= cloth.tri_mix
+    np.add.at(cloth.vel, cloth.tridex.ravel(), cloth.wind)
+    cloth.wind.shape = shape
+
+
+def generate_inflate(cloth):
+    """Blow it up baby!"""    
+    
+    tri_nor = cloth.normals #* cloth.ob.modeling_cloth_inflate # non-unit calculated by tri_normals_in_place() per each triangle
+    #tri_nor /= np.einsum("ij, ij->i", tri_nor, tri_nor)[:, nax]
+    
+    # reshape for add.at
+    shape = cloth.inflate.shape
+    
+    cloth.inflate += tri_nor[:, nax] * cloth.ob.modeling_cloth_inflate# * cloth.tri_mix
+    print(cloth.inflate.shape, "shape of cloth.inflate")
+    print(cloth.mix.shape)
+    
+    
+    cloth.inflate.shape = (shape[0] * 3, 3)
+    cloth.inflate *= cloth.tri_mix
+
+
+    np.add.at(cloth.vel, cloth.tridex.ravel(), cloth.inflate)
+    cloth.inflate.shape = shape
+    cloth.inflate *= 0
     
 class Cloth(object):
     pass
@@ -612,7 +649,7 @@ def create_instance(new=True):
         cloth.ob = ob 
     
     # get proxy object
-    proxy = cloth.ob.to_mesh(bpy.context.scene, False, 'PREVIEW')
+    #proxy = cloth.ob.to_mesh(bpy.context.scene, False, 'PREVIEW')
     # ----------------
     
     bpy.context.scene.objects.active = cloth.ob
@@ -685,13 +722,12 @@ def create_instance(new=True):
     cloth.vel.shape = (cloth.count, 3)
     cloth.self_col_vel = np.copy(co)
     
-    cloth.v_normals = np.zeros(co.shape)
-    get_v_normals(cloth.ob, cloth.v_normals, proxy)
-    cloth.wind = np.zeros(co.shape)
+    cloth.v_normals = np.zeros(co.shape, dtype=np.float32)
+    #get_v_normals(cloth.ob, cloth.v_normals, proxy)
     
     #noise---
     noise_zeros = np.zeros(cloth.count, dtype=np.float32)
-    random = np.random.random(cloth.count)
+    random = np.random.random(cloth.count).astype(np.float32)
     noise_zeros[:] = random
     cloth.noise = ((noise_zeros + -0.5) * cloth.ob.modeling_cloth_noise * 0.1)[:, nax]
     
@@ -703,20 +739,28 @@ def create_instance(new=True):
     # -------------->>>
 
     # new self collisions:
-    cloth.tridex = triangulate(cloth.ob, proxy)
+    cloth.tridex = triangulate(cloth.ob, cloth.ob.data)
     cloth.tridexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
+    cloth.tri_co = cloth.co[cloth.tridex]
+    tri_normals_in_place(cloth, cloth.tri_co) # non-unit normals
     # -------------->>>
+    
+    tri_uni, tri_inv, tri_counts = np.unique(cloth.tridex, return_inverse=True, return_counts=True)
+    cloth.tri_mix = (1 / tri_counts[tri_inv])[:, nax]
+    
+    cloth.wind = np.zeros(cloth.tri_co.shape, dtype=np.float32)
+    cloth.inflate = np.zeros(cloth.tri_co.shape, dtype=np.float32)
 
     bpy.ops.object.mode_set(mode=mode)
     
     # remove proxy
-    bpy.data.meshes.remove(proxy)
+    #bpy.data.meshes.remove(proxy)
     
     return cloth
 
 
 def run_handler(cloth):
-
+    T = time.time()
     if cloth.ob.modeling_cloth_handler_frame | cloth.ob.modeling_cloth_handler_scene:
         if cloth.ob.mode == 'EDIT':
             cloth.waiting = True
@@ -739,8 +783,9 @@ def run_handler(cloth):
 
             # mix in vel before collisions and sewing
             co[cloth.pindexer] += cloth.vel[cloth.pindexer]
-
             cloth.vel_start[:] = co
+
+            
             force = cloth.ob.modeling_cloth_spring_force
             mix = cloth.mix * force
 
@@ -776,25 +821,39 @@ def run_handler(cloth):
             grav = cloth.ob.modeling_cloth_gravity * (.01 / cloth.ob.modeling_cloth_iterations)
             cloth.vel += revert_rotation(cloth.ob, np.array([0, 0, grav]))
 
-            # refresh normals for inflate and wind
+            # refresh normals for inflate wind and self collisions
+            cloth.tri_co = cloth.co[cloth.tridex]
+            tri_normals_in_place(cloth, cloth.tri_co) # unit normals
+            # non-unit normals might be better for inflate and wind because
+            # their strength is affected by the area as it is should be
+            
+            #place after wind and inflate unless those are added to vel after collisions
+            if False:    
+                if wind | inflate:
+                    cloth.tri_co = cloth.co[cloth.tridex]
+                    tri_normals_in_place(cloth, cloth.tri_co)                
     
             # get proxy object
-            proxy = cloth.ob.to_mesh(bpy.context.scene, False, 'PREVIEW')
+            #proxy = cloth.ob.to_mesh(bpy.context.scene, False, 'PREVIEW')
             #proxy = cloth.ob.data
-            get_v_normals(cloth.ob, cloth.v_normals, proxy)
+            #get_v_normals(cloth.ob, cloth.v_normals, proxy)
+
 
             # wind:
             x = cloth.ob.modeling_cloth_wind_x
             y = cloth.ob.modeling_cloth_wind_y
             z = cloth.ob.modeling_cloth_wind_z
             wind_vec = np.array([x,y,z])
-            generate_wind(wind_vec, cloth.ob, cloth.v_normals, cloth.wind, cloth.vel)            
+            check_wind = wind_vec != 0
+            if np.any(check_wind):
+                generate_wind(wind_vec, cloth)            
 
             # inflate
-            inflate = cloth.ob.modeling_cloth_inflate * .1
+            inflate = cloth.ob.modeling_cloth_inflate
             if inflate != 0:
-                cloth.v_normals *= inflate
-                cloth.vel += cloth.v_normals
+                generate_inflate(cloth)
+                #cloth.v_normals *= inflate
+                #cloth.vel += cloth.v_normals
 
             # inextensible calc:
 
@@ -825,6 +884,9 @@ def run_handler(cloth):
                     co[sew_edges[:,1]] -= sew_vecs
                     co[sew_edges[:,0]] += sew_vecs
 
+            # !!!!!  need to try adding in the velocity before doing the collision stuff
+            # !!!!! so vel would be added here after wind and inflate but before collision
+            
             
             # floor ---
             if cloth.ob.modeling_cloth_floor:    
@@ -862,8 +924,9 @@ def run_handler(cloth):
 
             # remove proxy
             #proxy.user_clear()
-            del(proxy)
-
+            #bpy.data.meshes.remove(proxy)
+            #del(proxy)
+    print(time.time()-T, "the entire handler time")
 
 # +++++++++++++ object collisions ++++++++++++++
 def bounds_check(co1, co2, fudge):
@@ -1057,7 +1120,7 @@ def v_per_tri(co, tri_min, tri_max, idxer, tridexer, c_peat=None, t_peat=None):
     #return c_peat, t_peat
 
 
-def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin, self=None):
+def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin, offset=None):
     idxer = np.arange(in_margin.shape[0], dtype=np.int32)[in_margin]
     
     r_co = co[cidx[in_margin]]    
@@ -1078,9 +1141,8 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
     v = (d00 * d12 - d01 * d02) * div
     
     # !!! Watch out for this number. It could affect speed !!! 
-    self = .03
-    if self:
-        check = (u > -self) & (v > -self) & (u + v < self + 1)
+    if offset:
+        check = (u > -offset) & (v > -offset) & (u + v < offset + 1)
     else:
         check = (u > 0) & (v > 0) & (u + v < 1)
     in_margin[idxer] = check
@@ -1125,8 +1187,8 @@ def object_collide(cloth, object):
                     tri_normals_in_place(object, marginalized)
                     
                     # add normals to make extruded tris
-                    norms_2 = object.normals[tris_in]
-                    u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
+                    u_norms = object.normals[tris_in]
+                    #u_norms = norms_2 / np.sqrt(np.einsum('ij, ij->i', norms_2, norms_2))[:, nax] 
                                         
                     cidx, tidx = v_tris
                     ori = object.origins[tris_in][tidx]
@@ -1166,51 +1228,53 @@ def self_collide(cloth, object):
     margin = object.ob.modeling_cloth_outer_margin
     fudge = margin
 
-    tri_co = cloth.co[cloth.tridex]
+    tri_co = cloth.tri_co
 
     tri_min = np.min(tri_co, axis=1) - fudge
     tri_max = np.max(tri_co, axis=1) + fudge    
-    tri_normals_in_place(object, tri_co)
 
     # begin every vertex co against every tri
     v_tris = v_per_tri(cloth.co, tri_min, tri_max, cloth.idxer, cloth.tridexer)
     if v_tris is not None:
         cidx, tidx = v_tris
 
-        norms = object.normals
-        u_norms = norms / np.sqrt(np.einsum('ij, ij->i', norms, norms))[:, nax] 
+        u_norms = cloth.normals
 
         # don't check faces the verts are part of        
-        check_neighbors = cidx[:, nax] == object.tridex[tidx]
+        check_neighbors = cidx[:, nax] == cloth.tridex[tidx]
         cull = np.any(check_neighbors, axis=1)
         cidx, tidx = cidx[~cull], tidx[~cull]
         
-        ori = object.origins[tidx]
+        ori = cloth.origins[tidx]
         nor = u_norms[tidx]
         vec2 = cloth.co[cidx] - ori
         
         d = np.einsum('ij, ij->i', nor, vec2) # nor is unit norms
         in_margin = (d > -margin) & (d < margin)
-
+        print(cidx.shape, tidx.shape)
         # <<<--- Inside triangle check --->>>
         # will overwrite in_margin:
-        cross_2 = object.cross_vecs[tidx][in_margin]
-        inside_triangles(cross_2, vec2[in_margin], cloth.co, tri_co, cidx, tidx, nor, ori, in_margin)
+        cross_2 = cloth.cross_vecs[tidx][in_margin]
+        inside_triangles(cross_2, vec2[in_margin], cloth.co, tri_co, cidx, tidx, nor, ori, in_margin, offset=0.04)
         
         if np.any(in_margin):
             # collision response --------------------------->>>
-            #t_in = tidx[in_margin]
+            t_in = tidx[in_margin]
             #tri_vel1 = np.mean(tri_co[t_in], axis=1)
             #tvel = np.mean(tri_vo[t_in], axis=1)
             #tvel = tri_vel1 - tri_vel2
+            t_vel = np.mean(cloth.vel[cloth.tridex][t_in], axis=1)
             
             col_idx = cidx[in_margin] 
             d_in = d[in_margin]
     
             sign_margin = margin * np.sign(d_in) # which side of the face
-            cloth.co[col_idx] -= ((nor[in_margin] * d_in[:, nax]) - (nor[in_margin] * sign_margin[:, nax]))#) * -np.sign(d[in_margin])[:, nax]
-
-            cloth.vel[col_idx] = 0
+            c_move = ((nor[in_margin] * d_in[:, nax]) - (nor[in_margin] * sign_margin[:, nax]))#) * -np.sign(d[in_margin])[:, nax]
+            #c_move *= 1 / cloth.ob.modeling_cloth_grid_size
+            #cloth.co[col_idx] -= ((nor[in_margin] * d_in[:, nax]) - (nor[in_margin] * sign_margin[:, nax]))#) * -np.sign(d[in_margin])[:, nax]
+            cloth.co[col_idx] -= c_move #* .7
+            #cloth.vel[col_idx] = 0
+            cloth.vel[col_idx] = t_vel
 
     #object.vel[:] = object.co    
 # self collider =============================================
@@ -1525,7 +1589,7 @@ class ModelingClothPin(bpy.types.Operator):
     bl_label = "Modeling Cloth Pin"
     bl_options = {'REGISTER', 'UNDO'}
     def __init__(self):
-        bpy.ops.object.select_all(action='DESELECT')    
+        #bpy.ops.object.select_all(action='DESELECT')    
         extra_data['just_clicked'] = False
         
     def modal(self, context, event):
@@ -1665,7 +1729,7 @@ class ModelingClothDrag(bpy.types.Operator):
     bl_label = "Modeling Cloth Drag"
     bl_options = {'REGISTER', 'UNDO'}
     def __init__(self):
-        bpy.ops.object.select_all(action='DESELECT')    
+        #bpy.ops.object.select_all(action='DESELECT')    
         extra_data['hit'] = None
         extra_data['clicked'] = False
         extra_data['stored_mouse'] = None
@@ -1764,7 +1828,7 @@ class SelectPins(bpy.types.Operator):
     def execute(self, context):
         ob = get_last_object() # returns list and last cloth objects or None
         if ob is not None:
-            bpy.ops.object.select_all(action='DESELECT')
+            #bpy.ops.object.select_all(action='DESELECT')
             for i in data[ob[1].name].hook_list:
                 i.select = True
 
