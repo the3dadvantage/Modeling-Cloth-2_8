@@ -909,7 +909,7 @@ def run_handler(cloth):
             #print(time.time()-T, "the whole enchalada")
             # objects ---
             
-            cloth.co[~cloth.pindexer] = cloth.vel_start[~cloth.pindexer]
+            #cloth.co[~cloth.pindexer] = cloth.vel_start[~cloth.pindexer]
             
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
