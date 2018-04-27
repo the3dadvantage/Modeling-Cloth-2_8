@@ -6,7 +6,6 @@
 
 # to do:
 #  use point raycaster to make a cloth_wrap option
-#  fix multiple sew spring error
 #  self colisions
     # maybe do dynamic margins for when cloth is moving fast
 #  object collisions
@@ -15,17 +14,7 @@
 #  add curl by shortening bending springs on one axis or diagonal
 #  independantly scale bending springs and structural to create buckling
 #  option to cache animation?
-
-
-# BAD BUGS !!!
-# Proxy ram issues:
-#   when creating a deleting proxy mesh with shape keys shape keys are building up in ram
-#   using proxy on cloth just for wind and inflate so I can use foreach_get v_normals. Could do my own normals and eliminate proxy
-#   will have to use proxy on avatar to pick up armature anims. If avatar has shape keys will be an issue. Won't need if we're just storing animation data and sending it out
-
-# Cloth collisions:
-#   cloth self collisions get weird if the cloth is not in rest position when collide is clicked on
-#   cloth is still using proxy settings for self collisions. Can turn off mods before creating proxy but still have shape key ram issue
+#  Custom Source shape option for animated shapes
 
 
 # collisions:
@@ -36,6 +25,10 @@
 # move along the face normal to the surface for the point inside.
 # if I reflect by flipping the vel around the face normal
 #   if it collides on the bounce it will get caught on the next iteration
+
+# Sewing
+# Could create super sewing that doesn't use edges but uses scalars along the edge to place virtual points
+#   sort of a barycentric virtual spring. Could even use it to sew to faces if I can think of a ui for where on the face.
 
 
 '''??? Would it make sense to do self collisions with virtual edges ???'''
@@ -358,6 +351,13 @@ def get_minimal_edges(ob):
     # get sew edges:
     sew = [i.index for i in obm.edges if len(i.link_faces)==0]
     
+    
+    
+    # so if I have a vertex with one or more sew edges attached
+    # I need to get the mean location of all verts shared by those edges
+    # every one of those verts needs to move towards the total mean
+    
+    
     # get linear edges
     e_count = len(obm.edges)
     eidx = np.zeros(e_count * 2, dtype=np.int32)
@@ -395,8 +395,26 @@ def get_minimal_edges(ob):
     sew_eidx = eidx[e_bool]
     lin_eidx = eidx[~e_bool]
     diag_eidx = np.array(diag_eidx)
+    
+    # deal with sew verts connected to more than one edge
+    s_t_rav = sew_eidx.T.ravel()
+    s_uni, s_inv, s_counts = np.unique(s_t_rav,return_inverse=True, return_counts=True)
+    s_multi = s_counts > 1
+    
+    multi_groups = None
+    if np.any(s_counts):
+        multi_groups = []
+        ls = sew_eidx[:,0]
+        rs = sew_eidx[:,1]
         
-    return lin_eidx, diag_eidx, sew_eidx
+        for i in s_uni[s_multi]:
+            print(ls[rs==i])
+            gr = np.array([i])
+            gr = np.append(gr, ls[rs==i])
+            gr = np.append(gr, rs[ls==i])
+            multi_groups.append(gr)
+        
+    return lin_eidx, diag_eidx, sew_eidx, multi_groups
 
 
 def add_virtual_springs(remove=False):
@@ -533,8 +551,9 @@ def reset_shapes(ob=None):
     keys = ob.data.shape_keys.key_blocks
     count = len(ob.data.vertices)
     co = np.zeros(count * 3, dtype=np.float32)
-    keys['modeling cloth source key'].data.foreach_get('co', co)
+    keys['Basis'].data.foreach_get('co', co)
     #co = applied_key_co(ob, None, 'modeling cloth source key')
+    keys['modeling cloth source key'].data.foreach_set('co', co)
     keys['modeling cloth key'].data.foreach_set('co', co)
     
     # reset the data stored in the class
@@ -623,6 +642,27 @@ def generate_inflate(cloth):
     np.add.at(cloth.vel, cloth.tridex.ravel(), cloth.inflate)
     cloth.inflate.shape = shape
     cloth.inflate *= 0
+
+
+# sewing functions ---------------->>>
+def create_sew_edges():
+
+    bpy.ops.mesh.bridge_edge_loops()
+    bpy.ops.mesh.delete(type='ONLY_FACE')
+    return
+    #highlight a sew edge
+    #compare vertex counts
+    #subdivide to match counts
+    #distribute and smooth back into mesh
+    #create sew lines
+     
+
+    
+
+
+
+# sewing functions ---------------->>>
+
     
 class Cloth(object):
     pass
@@ -703,6 +743,7 @@ def create_instance(new=True):
     cloth.unpinned = unpinned
 
     cloth.sew_edges = uni_edges[2]
+    cloth.multi_sew = uni_edges[3]
     
     # unique edges------------>>>
     
@@ -779,6 +820,7 @@ def run_handler(cloth):
             sdots = np.einsum('ij,ij->i', svecs, svecs)
 
             co[cloth.pindexer] += cloth.noise[cloth.pindexer]
+            #co += cloth.noise
             cloth.noise *= cloth.ob.modeling_cloth_noise_decay
 
             # mix in vel before collisions and sewing
@@ -883,7 +925,15 @@ def run_handler(cloth):
                     sew_vecs = (rs - ls) * 0.5 * cloth.ob.modeling_cloth_sew
                     co[sew_edges[:,1]] -= sew_vecs
                     co[sew_edges[:,0]] += sew_vecs
-
+                    
+                    # for sew verts with more than one sew edge
+                    if cloth.multi_sew is not None:
+                        for sg in cloth.multi_sew:
+                            cosg = co[sg]
+                            meanie = np.mean(cosg, axis=0)
+                            sg_vecs = meanie - cosg
+                            co[sg] += sg_vecs * cloth.ob.modeling_cloth_sew
+                
             # !!!!!  need to try adding in the velocity before doing the collision stuff
             # !!!!! so vel would be added here after wind and inflate but before collision
             
@@ -904,12 +954,13 @@ def run_handler(cloth):
                     for i, val in extra_data['colliders'].items():
                         if val.ob == cloth.ob:    
                             self_collide(cloth, val)
+                            #cloth.co[cloth.pindexer] = cloth.vel_start[cloth.pindexer]
                         else:    
                             object_collide(cloth, val)
             #print(time.time()-T, "the whole enchalada")
             # objects ---
             
-            #cloth.co[~cloth.pindexer] = cloth.vel_start[~cloth.pindexer]
+
             
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
@@ -1221,6 +1272,12 @@ def object_collide(cloth, object):
 
     object.vel[:] = object.co    
     revert_in_place(cloth.ob, cloth.co)
+    
+    #temp_ob = bpy.data.objects.new('__TEMP', proxy)
+    #for key in proxy.shape_keys.key_blocks:
+    #    temp_ob.shape_key_remove(key)
+            
+    #bpy.data.objects.remove(temp_ob)
     bpy.data.meshes.remove(proxy)
 
 
@@ -1256,7 +1313,7 @@ def self_collide(cloth, object):
         # <<<--- Inside triangle check --->>>
         # will overwrite in_margin:
         cross_2 = cloth.cross_vecs[tidx][in_margin]
-        inside_triangles(cross_2, vec2[in_margin], cloth.co, tri_co, cidx, tidx, nor, ori, in_margin, offset=0.04)
+        inside_triangles(cross_2, vec2[in_margin], cloth.co, tri_co, cidx, tidx, nor, ori, in_margin, offset=0.0)
         
         if np.any(in_margin):
             # collision response --------------------------->>>
@@ -1444,6 +1501,7 @@ def handler_frame(scene):
 
 
 def handler_scene(scene):
+
     items = data.items()
     if len(items) == 0:
         for i in bpy.data.objects:
@@ -1583,6 +1641,32 @@ def main(context, event):
                     best_length_squared = length_squared
                     best_obj = obj
                    
+
+# sewing --------->>>
+class ModelingClothSew(bpy.types.Operator):
+    """For connected two edges with sew lines"""
+    bl_idname = "object.modeling_cloth_create_sew_lines"
+    bl_label = "Modeling Cloth Create Sew Lines"
+    bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context):
+        
+        #ob = get_last_object() # returns tuple with list and last cloth objects or None
+        #if ob is not None:
+            #obj = ob[1]
+        #else:
+        obj = bpy.context.object
+        
+        #bpy.context.scene.objects.active = obj
+        mode = obj.mode
+        if mode != "EDIT":
+            bpy.ops.object.mode_set(mode="EDIT")
+        
+        create_sew_edges()
+        bpy.ops.object.mode_set(mode="EDIT")            
+
+        return {'FINISHED'}
+# sewing --------->>>
+
 
 class ModelingClothPin(bpy.types.Operator):
     """Modal ray cast for placing pins"""
@@ -2102,6 +2186,13 @@ class ModelingClothPanel(bpy.types.Panel):
     def draw(self, context):
         status = False
         layout = self.layout
+        
+        # tools
+        col = layout.column(align=True)
+        col.label(text="Tools")        
+        col.operator("object.modeling_cloth_create_sew_lines", text="Sew Lines", icon="MOD_UVPROJECT")
+        
+        # modeling cloth
         col = layout.column(align=True)
         col.label(text="Modeling Cloth")
         ob = bpy.context.object
@@ -2273,6 +2364,7 @@ def register():
     bpy.utils.register_class(UpdataPinWeights)
     bpy.utils.register_class(AddVirtualSprings)
     bpy.utils.register_class(RemoveVirtualSprings)
+    bpy.utils.register_class(ModelingClothSew)
     
     
     bpy.utils.register_class(CollisionSeries)
@@ -2294,6 +2386,7 @@ def unregister():
     bpy.utils.unregister_class(UpdataPinWeights)
     bpy.utils.unregister_class(AddVirtualSprings)
     bpy.utils.unregister_class(RemoveVirtualSprings)
+    bpy.utils.unregister_class(ModelingClothSew)
     
     
     bpy.utils.unregister_class(CollisionSeries)
@@ -2307,8 +2400,6 @@ if __name__ == "__main__":
     # testing!!!!!!!!!!!!!!!!
     #generate_collision_data(bpy.context.object)
     # testing!!!!!!!!!!!!!!!!
-
-
     
     for i in bpy.data.objects:
         i.modeling_cloth = False
