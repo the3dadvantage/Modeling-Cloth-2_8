@@ -29,8 +29,15 @@
 # Sewing
 # Could create super sewing that doesn't use edges but uses scalars along the edge to place virtual points
 #   sort of a barycentric virtual spring. Could even use it to sew to faces if I can think of a ui for where on the face.
+# On an all triangle mesh, where sew edges come together there are long strait lines. This probably causes those edges to fold.
+#   in other words... creating diagonal springs between these edges will not solve the fold problem. Bend spring could do this.
 
+# Bend springs:
+# need to speed things up
+# When faces have various sizes, the forces don't add up
 
+# self collision
+#   where points are pinned, stuff is all jittery
 '''??? Would it make sense to do self collisions with virtual edges ???'''
 '''??? Could do dynamic collision margins for stuff moving fast ???'''
 
@@ -92,7 +99,7 @@ def get_proxy_co(ob, arr, me):
     return arr
 
 
-def triangulate(ob, me):
+def triangulate(me, ob=None):
     """Requires a mesh. Returns an index array for viewing co as triangles"""
     obm = bmesh.new()
     obm.from_mesh(me)        
@@ -103,6 +110,14 @@ def triangulate(ob, me):
     #me.polygons.foreach_get('vertices', tri_idx)
     tri_idx = np.array([[v.index for v in f.verts] for f in obm.faces])
     
+    # Identify bend spring groups. Each edge gets paired with two points on tips of tris around edge    
+    # Restricted to edges with two linked faces on a triangulated version of the mesh
+    if ob is not None:
+        link_ed = [e for e in obm.edges if len(e.link_faces) == 2]
+        ob.bend_eidx = np.array([[e.verts[0].index, e.verts[1].index] for e in link_ed])
+        fv = np.array([[[v.index for v in f.verts] for f in e.link_faces] for e in link_ed])
+        fv.shape = (fv.shape[0],6)
+        ob.bend_tips = np.array([[idx for idx in fvidx if idx not in e] for e, fvidx in zip(ob.bend_eidx, fv)])
     obm.free()
     
     return tri_idx#.reshape(count, 3)
@@ -408,7 +423,6 @@ def get_minimal_edges(ob):
         rs = sew_eidx[:,1]
         
         for i in s_uni[s_multi]:
-            print(ls[rs==i])
             gr = np.array([i])
             gr = np.append(gr, ls[rs==i])
             gr = np.append(gr, rs[ls==i])
@@ -553,7 +567,7 @@ def reset_shapes(ob=None):
     co = np.zeros(count * 3, dtype=np.float32)
     keys['Basis'].data.foreach_get('co', co)
     #co = applied_key_co(ob, None, 'modeling cloth source key')
-    keys['modeling cloth source key'].data.foreach_set('co', co)
+    #keys['modeling cloth source key'].data.foreach_set('co', co)
     keys['modeling cloth key'].data.foreach_set('co', co)
     
     # reset the data stored in the class
@@ -631,9 +645,6 @@ def generate_inflate(cloth):
     shape = cloth.inflate.shape
     
     cloth.inflate += tri_nor[:, nax] * cloth.ob.modeling_cloth_inflate# * cloth.tri_mix
-    print(cloth.inflate.shape, "shape of cloth.inflate")
-    print(cloth.mix.shape)
-    
     
     cloth.inflate.shape = (shape[0] * 3, 3)
     cloth.inflate *= cloth.tri_mix
@@ -643,6 +654,127 @@ def generate_inflate(cloth):
     cloth.inflate.shape = shape
     cloth.inflate *= 0
 
+
+def get_quat(rad, axis):
+    theta = (rad * 0.5)
+    w = np.cos(theta)
+    q_axis = axis * np.sin(theta)[:, nax]
+    return w, q_axis
+
+
+def q_rotate(co, w, axis):
+    """Takes an N x 3 numpy array and returns that array rotated around
+    the axis by the angle in radians w. (standard quaternion)"""    
+    move1 = np.cross(axis, co)
+    move2 = np.cross(axis, move1)
+    move1 *= w[:, nax]
+    return co + (move1 + move2) * 2
+
+
+def bend_springs(cloth, co, measure=None):
+    bend_eidx, tips = cloth.bend_eidx, cloth.bend_tips
+
+    tips_co = co[tips]
+    bls, brs = bend_eidx[:,0], bend_eidx[:, 1]
+    b_oris = co[bls]
+    
+    be_vecs = co[brs] - b_oris
+    te_vecs = tips_co - b_oris[:, nax]
+
+    bcp_dots = np.einsum('ij,ikj->ik', be_vecs, te_vecs)
+    be_dots = np.einsum('ij,ij->i', be_vecs, be_vecs)
+    b_div = np.nan_to_num(bcp_dots / be_dots[:, nax])
+    
+    tcp = be_vecs[:, nax] * b_div[:, :, nax]
+    
+    # tip vecs from cp
+    tcp_vecs = te_vecs - tcp
+    tcp_dots = np.einsum('ijk,ijk->ij',tcp_vecs, tcp_vecs) 
+    
+    u_tcp_vecs = tcp_vecs / np.sqrt(tcp_dots)[:, :, nax]
+    
+    u_tcp_ls = u_tcp_vecs[:, 0]
+    u_tcp_rs = u_tcp_vecs[:, 1]
+    
+    # dot of unit tri tips around axis
+    angle_dot = np.einsum('ij,ij->i', u_tcp_ls, u_tcp_rs)
+    
+    #paralell = angle_dot < -.9999999
+    
+    angle = np.arccos(np.clip(angle_dot, -1, 1)) # values outside and arccos gives nan
+    #angle = np.arccos(angle_dot) # values outside and arccos gives nan
+
+
+    # get the angle sign
+    tcp_cross = np.cross(u_tcp_vecs[:, 0], u_tcp_vecs[:, 1])
+    sign = np.sign(np.einsum('ij,ij->i', be_vecs, tcp_cross))
+    
+    if measure is None:
+        s = np.arccos(angle_dot)
+        s *= sign
+        s[angle_dot < -.9999999] = np.pi
+
+        return s
+
+    angle *= sign
+    # rotate edges with quaternypoos
+    u_be_vecs = be_vecs / np.sqrt(be_dots)[:, nax]
+    b_dif = angle - measure
+    
+    l_ws, l_axes = get_quat(b_dif, u_be_vecs)
+    r_ws, r_axes = l_ws, -l_axes
+    
+    # move tcp vecs so their origin is in the middle:
+    #u_tcp_vecs *= 0.5    
+    
+    # should I rotate the unit vecs or the source?
+    #   rotating the unit vecs here.
+    
+    stiff = cloth.ob.modeling_cloth_bend_stiff * 0.0057
+    rot_ls = q_rotate(u_tcp_ls, l_ws, l_axes) 
+    l_force = (rot_ls - u_tcp_ls) * stiff
+    
+    rot_rs = q_rotate(u_tcp_rs, r_ws, r_axes)    
+    r_force = (rot_rs - u_tcp_rs) * stiff
+    
+    
+    np.add.at(cloth.co, tips[:, 0], l_force)
+    np.add.at(cloth.co, tips[:, 1], r_force)
+    
+    np.subtract.at(cloth.co, bend_eidx.ravel(), np.tile(r_force * .5, 2).reshape(r_force.shape[0] * 2, 3))
+    np.subtract.at(cloth.co, bend_eidx.ravel(), np.tile(l_force * .5, 2).reshape(l_force.shape[0] * 2, 3))
+    
+    return
+    cloth.co[tips[:, 0]] += l_force
+    cloth.co[tips[:, 1]] += r_force
+    
+    #cloth.co[bend_eidx] -= l_force
+    cloth.co[bend_eidx] -= r_force[:, nax]
+    cloth.co[bend_eidx] -= l_force[:, nax]
+    #cloth.co[brs] -= r_force
+    #print("bend here")
+
+    # will need to read bend springs continuously when using
+    # a dynamic source shape. Guess I should do that now...
+    
+    
+
+    # need the angle at each edge
+    # need to get the tips of each tri around each edge
+    # should be a pair everywhere there is a link face in
+    #   the tri bmesh
+    """
+    With no sign I just get the dot in radians.
+    Rotation should move towards the shortest distance
+    to the same dot in radians. 
+    
+    Without getting the sign at all, it will always rotate
+    in the same direction to go back to the target.
+    By multiplying the dif by the sign, I can make it spin
+    the other way to go back to the target dot in rads
+    
+    """
+    
 
 # sewing functions ---------------->>>
 def create_sew_edges():
@@ -780,7 +912,7 @@ def create_instance(new=True):
     # -------------->>>
 
     # new self collisions:
-    cloth.tridex = triangulate(cloth.ob, cloth.ob.data)
+    cloth.tridex = triangulate(cloth.ob.data, cloth)
     cloth.tridexer = np.arange(cloth.tridex.shape[0], dtype=np.int32)
     cloth.tri_co = cloth.co[cloth.tridex]
     tri_normals_in_place(cloth, cloth.tri_co) # non-unit normals
@@ -794,8 +926,15 @@ def create_instance(new=True):
 
     bpy.ops.object.mode_set(mode=mode)
     
-    # remove proxy
-    #bpy.data.meshes.remove(proxy)
+    
+    # for use with a static source shape:
+    cloth.source_angles = bend_springs(cloth, cloth.sco, None)
+    svecs = cloth.sco[cloth.eidx[:, 1]] - cloth.sco[cloth.eidx[:, 0]]
+    cloth.sdots = np.einsum('ij,ij->i', svecs, svecs)
+    
+    # for doing static cling
+    #   cloth.col_idx = np.array([], dtype=np.int32)
+    #   cloth.re_col = np.empty((0,3), dtype=np.float32)
     
     return cloth
 
@@ -815,10 +954,7 @@ def run_handler(cloth):
 
             sco = cloth.sco
             co = cloth.co
-
-            svecs = sco[eidx[:, 1]] - sco[eidx[:, 0]]
-            sdots = np.einsum('ij,ij->i', svecs, svecs)
-
+            
             co[cloth.pindexer] += cloth.noise[cloth.pindexer]
             #co += cloth.noise
             cloth.noise *= cloth.ob.modeling_cloth_noise_decay
@@ -827,13 +963,37 @@ def run_handler(cloth):
             co[cloth.pindexer] += cloth.vel[cloth.pindexer]
             cloth.vel_start[:] = co
 
+            # measure source -------------------------->>>
+            dynamic = True # can store for speedup if source shape is static
+            # bend spring calculations:
+            if cloth.ob.modeling_cloth_bend_stiff != 0:
+            
+                # measure bend source if using dynamic source:
+                source_angles = cloth.source_angles
+                if dynamic:    
+                    source_angles = bend_springs(cloth, sco, None)
+            
+            # linear spring measure
+            sdots = cloth.sdots
+            if dynamic:    
+                cloth.ob.data.shape_keys.key_blocks['modeling cloth source key'].data.foreach_get('co', sco.ravel())
+                svecs = sco[eidx[:, 1]] - sco[eidx[:, 0]]
+                sdots = np.einsum('ij,ij->i', svecs, svecs)            
+            # ----------------------------------------->>>
             
             force = cloth.ob.modeling_cloth_spring_force
             mix = cloth.mix * force
-
+            
+            ers = eidx[:, 1]
+            els = eidx[:, 0]
             for x in range(cloth.ob.modeling_cloth_iterations):    
+
+                # bend spring calculations:
+                if cloth.ob.modeling_cloth_bend_stiff != 0:
+                    bend_springs(cloth, co, source_angles)
+
                 # add pull
-                vecs = co[eidx[:, 1]] - co[eidx[:, 0]]
+                vecs = co[ers] - co[els]
                 dots = np.einsum('ij,ij->i', vecs, vecs)
                 div = np.nan_to_num(sdots / dots)
                 swap = vecs * np.sqrt(div)[:, nax]
@@ -851,6 +1011,11 @@ def run_handler(cloth):
                 
                 np.add.at(cloth.co, cloth.eidx_tiler, tiled_move)
                 
+                # for doing static cling
+                #   cloth.co[cloth.col_idx] = cloth.re_col
+
+                cloth.co[~cloth.pin_bool] = cloth.vel_start[~cloth.pin_bool]
+
                 if len(cloth.pin_list) > 0:
                     hook_co = np.array([cloth.ob.matrix_world.inverted() * i.matrix_world.to_translation() for i in cloth.hook_list])
                     cloth.co[cloth.pin_list] = hook_co
@@ -859,27 +1024,55 @@ def run_handler(cloth):
                 if cloth.clicked: # for the grab tool
                     cloth.co[extra_data['vidx']] = np.array(extra_data['stored_vidx']) + np.array(+ extra_data['move'])   
 
-            spring_dif = cloth.co - cloth.vel_start
-            grav = cloth.ob.modeling_cloth_gravity * (.01 / cloth.ob.modeling_cloth_iterations)
-            cloth.vel += revert_rotation(cloth.ob, np.array([0, 0, grav]))
 
             # refresh normals for inflate wind and self collisions
             cloth.tri_co = cloth.co[cloth.tridex]
             tri_normals_in_place(cloth, cloth.tri_co) # unit normals
+
+
+            
+            # add effects of velocity and Gravity to the vel array for later
+            spring_dif = cloth.co - cloth.vel_start
+            
+            #if cloth.ob.modeling_cloth_bend_stiff > 0:
+                #for
+            
             # non-unit normals might be better for inflate and wind because
             # their strength is affected by the area as it is should be
             
             #place after wind and inflate unless those are added to vel after collisions
-            if False:    
-                if wind | inflate:
-                    cloth.tri_co = cloth.co[cloth.tridex]
-                    tri_normals_in_place(cloth, cloth.tri_co)                
+              
     
             # get proxy object
             #proxy = cloth.ob.to_mesh(bpy.context.scene, False, 'PREVIEW')
             #proxy = cloth.ob.data
             #get_v_normals(cloth.ob, cloth.v_normals, proxy)
 
+
+
+
+
+            # gravity
+            grav = cloth.ob.modeling_cloth_gravity * 0.01# / cloth.ob.modeling_cloth_iterations)
+            if grav != 0:
+                cloth.vel += revert_rotation(cloth.ob, np.array([0, 0, grav])) / np.array(cloth.ob.scale)
+            
+            # can cheat here:
+            #spring_mean = np.mean(spring_dif, axis=0)
+            #cloth.vel += spring_mean * 20
+
+            # inextensible calc:
+            cloth.vel += spring_dif * 2
+
+
+
+            # The amount of drag increases with speed. 
+            # have to convert to to a range between 0 and 1
+            #squared_move_dist = np.sqrt(np.einsum("ij, ij->i", cloth.vel, cloth.vel))
+            squared_move_dist = np.einsum("ij, ij->i", cloth.vel, cloth.vel)
+            squared_move_dist += 1
+            cloth.vel *= (1 / (squared_move_dist / cloth.ob.modeling_cloth_velocity))[:, nax]
+            #cloth.vel *= cloth.ob.modeling_cloth_velocity
 
             # wind:
             x = cloth.ob.modeling_cloth_wind_x
@@ -897,24 +1090,6 @@ def run_handler(cloth):
                 #cloth.v_normals *= inflate
                 #cloth.vel += cloth.v_normals
 
-            # inextensible calc:
-
-            ab_dot = np.einsum('ij, ij->i', cloth.vel, spring_dif)
-            aa_dot = np.einsum('ij, ij->i', spring_dif, spring_dif)
-            div = np.nan_to_num(ab_dot / aa_dot)
-            cp = spring_dif * div[:, nax]
-            cloth.vel -= np.nan_to_num(cp)
-            cloth.vel += (spring_dif + cp)
-
-            # !!! need to test if this should be added again here!!!
-            cloth.vel += spring_dif        
-            # !!! need to test if this should be added again here!!!
-
-            # The amount of drag increases with speed. 
-            # have to convert to to a range between 0 and 1
-            squared_move_dist = np.einsum("ij, ij->i", cloth.vel, cloth.vel)
-            squared_move_dist += 1
-            cloth.vel *= (1 / (squared_move_dist / cloth.ob.modeling_cloth_velocity))[:, nax]
             
 
             if cloth.ob.modeling_cloth_sew != 0:
@@ -950,17 +1125,20 @@ def run_handler(cloth):
             # objects ---
             #T = time.time()
             if cloth.ob.modeling_cloth_object_detect:
+                if cloth.ob.modeling_cloth_self_collision:
+                    self_collide(cloth)
+                
                 if extra_data['colliders'] is not None:
                     for i, val in extra_data['colliders'].items():
-                        if val.ob == cloth.ob:    
-                            self_collide(cloth, val)
+                        #if val.ob.modeling_cloth_self_collision == cloth.ob:    
+                            #self_collide(cloth, val)
                             #cloth.co[cloth.pindexer] = cloth.vel_start[cloth.pindexer]
-                        else:    
+                        if val.ob != cloth.ob:
                             object_collide(cloth, val)
             #print(time.time()-T, "the whole enchalada")
             # objects ---
-            
 
+            cloth.co[~cloth.pin_bool] = cloth.vel_start[~cloth.pin_bool]
             
             if len(cloth.pin_list) > 0:
                 cloth.co[cloth.pin_list] = hook_co
@@ -979,7 +1157,7 @@ def run_handler(cloth):
             #proxy.user_clear()
             #bpy.data.meshes.remove(proxy)
             #del(proxy)
-    print(time.time()-T, "the entire handler time")
+    #print(time.time()-T, "the entire handler time")
 
 # +++++++++++++ object collisions ++++++++++++++
 def bounds_check(co1, co2, fudge):
@@ -1202,6 +1380,11 @@ def inside_triangles(tri_vecs, v2, co, tri_co_2, cidx, tidx, nor, ori, in_margin
 
 
 def object_collide(cloth, object):
+    
+    # for doing static cling
+    #   cloth.col_idx = np.array([], dtype=np.int32)
+    #   cloth.re_col = np.empty((0,3), dtype=np.float32)
+    
     proxy = object.ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
     proxy_in_place(object, proxy)
     apply_in_place(cloth.ob, cloth.co, cloth)
@@ -1269,7 +1452,11 @@ def object_collide(cloth, object):
                         col_idx = cidx[in_margin] 
                         cloth.co[col_idx] -= nor[in_margin] * (d[in_margin])[:, nax]
                         cloth.vel[col_idx] = tvel
-
+                        
+                        # for doing static cling
+                        #   cloth.re_col = np.copy(cloth.co[col_idx])                        
+                        #   cloth.col_idx = col_idx
+                        
     object.vel[:] = object.co    
     revert_in_place(cloth.ob, cloth.co)
     
@@ -1282,15 +1469,14 @@ def object_collide(cloth, object):
 
 
 # self collider =============================================
-def self_collide(cloth, object):
+def self_collide(cloth):
 
-    margin = object.ob.modeling_cloth_outer_margin
-    fudge = margin
+    margin = cloth.ob.modeling_cloth_self_collision_margin
 
     tri_co = cloth.tri_co
 
-    tri_min = np.min(tri_co, axis=1) - fudge
-    tri_max = np.max(tri_co, axis=1) + fudge    
+    tri_min = np.min(tri_co, axis=1) - margin
+    tri_max = np.max(tri_co, axis=1) + margin   
 
     # begin every vertex co against every tri
     v_tris = v_per_tri(cloth.co, tri_min, tri_max, cloth.idxer, cloth.tridexer)
@@ -1378,7 +1564,7 @@ def create_collider():
     proxy_in_place(col, proxy)
     col.v_normals = proxy_v_normals(col.ob, proxy)
     col.vel = np.copy(col.co)
-    col.tridex = triangulate(col.ob, proxy)
+    col.tridex = triangulate(proxy)
     col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
     # cross_vecs used later by barycentric tri check
     proxy_v_normals_in_place(col, True, proxy)
@@ -1399,7 +1585,7 @@ def create_self_collider():
     proxy_in_place(col)
     col.v_normals = proxy_v_normals(col.ob)
     col.vel = np.copy(col.co)
-    col.tridex = triangulate(col.ob)
+    #col.tridex = triangulate(col.ob)
     col.tridexer = np.arange(col.tridex.shape[0], dtype=np.int32)
     # cross_vecs used later by barycentric tri check
     proxy_v_normals_in_place(col)
@@ -2050,16 +2236,21 @@ def create_properties():
     # spring forces ------------>>>
     bpy.types.Object.modeling_cloth_spring_force = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
         description="Set the spring force", 
-        default=1, precision=4, min=0, max=2.5)#, update=refresh_noise)
+        default=1.0, precision=4, min=0, max=2.5)#, update=refresh_noise)
 
-    bpy.types.Object.modeling_cloth_push_springs = bpy.props.FloatProperty(name="Modeling Cloth Spring Force", 
+    bpy.types.Object.modeling_cloth_push_springs = bpy.props.FloatProperty(name="Modeling Cloth Push Spring Force", 
         description="Set the push spring force", 
-        default=1, precision=4, min=0, max=2.5)#, update=refresh_noise)
+        default=1.0, precision=4, min=0, max=2.5)#, update=refresh_noise)
+    
+    # bend springs
+    bpy.types.Object.modeling_cloth_bend_stiff = bpy.props.FloatProperty(name="Modeling Cloth Bend Spring Force", 
+        description="Set the bend spring force", 
+        default=0.0, precision=4, min=0, max=10, soft_max=1)#, update=refresh_noise)
     # -------------------------->>>
 
     bpy.types.Object.modeling_cloth_gravity = bpy.props.FloatProperty(name="Modeling Cloth Gravity", 
         description="Modeling cloth gravity", 
-        default=0.0, precision=4, min= -10, max=10)#, update=refresh_noise_decay)
+        default=0.0, precision=4, soft_min=-10, soft_max=10, min=-1000, max=1000)
 
     bpy.types.Object.modeling_cloth_iterations = bpy.props.IntProperty(name="Stiffness", 
         description="How stiff the cloth is", 
@@ -2072,32 +2263,32 @@ def create_properties():
     # Wind. Note, wind should be measured against normal and be at zero when normals are at zero. Squared should work
     bpy.types.Object.modeling_cloth_wind_x = bpy.props.FloatProperty(name="Wind X", 
         description="Not the window cleaner", 
-        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+        default=0, min= -10, max=10, soft_min= -1, soft_max=1)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_wind_y = bpy.props.FloatProperty(name="Wind Y", 
         description="Y? Because wind is cool", 
-        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+        default=0, min= -10, max=10, soft_min= -1, soft_max=1)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_wind_z = bpy.props.FloatProperty(name="Wind Z", 
         description="It's windzee outzide", 
-        default=0, min= -1, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+        default=0, min= -10, max=10, soft_min= -1, soft_max=1)#, update=refresh_noise_decay)
 
     bpy.types.Object.modeling_cloth_turbulence = bpy.props.FloatProperty(name="Wind Turbulence", 
         description="Add Randomness to wind", 
-        default=0, min=0, max=1, soft_min= -10, soft_max=10)#, update=refresh_noise_decay)
+        default=0, min=0, max=10, soft_min= 0, soft_max=1)#, update=refresh_noise_decay)
 
     # self collision ----->>>
-#    bpy.types.Object.modeling_cloth_self_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
-#        description="Toggle self collision", 
-#        default=False, update=collision_data_update)
+    bpy.types.Object.modeling_cloth_self_collision = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
+        description="Toggle self collision", 
+        default=False, update=collision_data_update)
 
 #    bpy.types.Object.modeling_cloth_self_collision_force = bpy.props.FloatProperty(name="recovery force", 
 #        description="Self colide faces repel", 
 #        default=.17, precision=4, min= -1.1, max=1.1, soft_min= 0, soft_max=1)
 
-#    bpy.types.Object.modeling_cloth_self_collision_margin = bpy.props.FloatProperty(name="Margin", 
-#        description="Self colide faces margin", 
-#        default=.08, precision=4, min= -1, max=1, soft_min= 0, soft_max=1)
+    bpy.types.Object.modeling_cloth_self_collision_margin = bpy.props.FloatProperty(name="Margin", 
+        description="Self colide faces margin", 
+        default=.08, precision=4, min= -1, max=1, soft_min= 0, soft_max=1)
 
 #    bpy.types.Object.modeling_cloth_self_collision_cy_size = bpy.props.FloatProperty(name="Cylinder size", 
 #        description="Self colide faces cylinder size", 
@@ -2125,7 +2316,7 @@ def create_properties():
     
     bpy.types.Object.modeling_cloth_object_detect = bpy.props.BoolProperty(name="Modeling Cloth Self Collsion", 
         description="Detect collision objects", 
-        default=False, update=cloth_object_update)    
+        default=True, update=cloth_object_update)    
 
     bpy.types.Object.modeling_cloth_outer_margin = bpy.props.FloatProperty(name="Modeling Cloth Outer Margin", 
         description="Collision margin on positive normal side of face", 
@@ -2133,15 +2324,13 @@ def create_properties():
         
     bpy.types.Object.modeling_cloth_inner_margin = bpy.props.FloatProperty(name="Modeling Cloth Inner Margin", 
         description="Collision margin on negative normal side of face", 
-        default=0.1, precision=4, min=0, max=100, soft_min=0, soft_max=1000)        
+        default=0.08, precision=4, min=0, max=100, soft_min=0, soft_max=1000)        
     # ---------------------------->>>
     
     # more collision stuff ------->>>
     bpy.types.Object.modeling_cloth_grid_size = bpy.props.IntProperty(name="Modeling Cloth Grid Size", 
     description="Max subdivisions for the dynamic broad phase grid", 
     default=10, min=0, max=1000, soft_min=0, soft_max=1000)
-
-
     
     # property dictionaries
     if "modeling_cloth_data_set" not in dir(bpy.types.Scene):
@@ -2209,7 +2398,10 @@ class ModelingClothPanel(bpy.types.Panel):
         if ob is not None:
             if ob.type == 'MESH':
                 col.prop(ob ,"modeling_cloth", text="Modeling Cloth", icon='SURFACE_DATA')               
-                
+                if ob.modeling_cloth:    
+                    col.prop(ob ,"modeling_cloth_self_collision", text="Self Collision", icon='PHYSICS')
+                    col.prop(ob ,"modeling_cloth_self_collision_margin", text="Self Margin")#, icon='PLAY')
+                    
                 pause = 'PAUSE'
                 if ob.modeling_cloth_pause:
                     pause = 'PLAY'
@@ -2220,7 +2412,8 @@ class ModelingClothPanel(bpy.types.Panel):
                 if ob.modeling_cloth_object_collision:    
                     col.prop(ob ,"modeling_cloth_outer_margin", text="Outer Margin", icon="FORCE_FORCE")
                     col.prop(ob ,"modeling_cloth_inner_margin", text="Inner Margin", icon="STICKY_UVS_LOC")
-                
+                    col = layout.column(align=True)
+                    
                 col.label("Collide List:")
                 colliders = [i.name for i in bpy.data.objects if i.modeling_cloth_object_collision]
                 for i in colliders:
@@ -2255,6 +2448,7 @@ class ModelingClothPanel(bpy.types.Panel):
                     col.prop(ob ,"modeling_cloth_iterations", text="Iterations")#, icon='OUTLINER_OB_LATTICE')               
                     col.prop(ob ,"modeling_cloth_spring_force", text="Stiffness")#, icon='OUTLINER_OB_LATTICE')               
                     col.prop(ob ,"modeling_cloth_push_springs", text="Push Springs")#, icon='OUTLINER_OB_LATTICE')               
+                    col.prop(ob ,"modeling_cloth_bend_stiff", text="Bend Springs")#, icon='CURVE_NCURVE')               
                     col.prop(ob ,"modeling_cloth_noise", text="Noise")#, icon='PLAY')               
                     col.prop(ob ,"modeling_cloth_noise_decay", text="Decay Noise")#, icon='PLAY')               
                     col.prop(ob ,"modeling_cloth_gravity", text="Gravity")#, icon='PLAY')        
