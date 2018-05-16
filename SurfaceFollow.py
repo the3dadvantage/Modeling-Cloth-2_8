@@ -270,31 +270,31 @@ def nearest_triangles_oct(surface_coords, follower_coords, tris):  # octree
     b0 = np.all(s1, axis=1)
     m0 = np.mean(means[b0], axis=0)    
     
-    s1[:,0] = -s1[:,0]
+    s1[:,0] = ~s1[:,0]
     b1 = np.all(s1, axis=1)
     m1 = np.mean(means[b1], axis=0)
     
-    s1[:,1] = -s1[:,1]
+    s1[:,1] = ~s1[:,1]
     b2 = np.all(s1, axis=1)
     m2 = np.mean(means[b2], axis=0)
 
-    s1[:,0] = -s1[:,0]
+    s1[:,0] = ~s1[:,0]
     b3 = np.all(s1, axis=1)
     m3 = np.mean(means[b3], axis=0) 
 
-    s1[:,2] = -s1[:,2]
+    s1[:,2] = ~s1[:,2]
     b4 = np.all(s1, axis=1)
     m4 = np.mean(means[b4], axis=0)
 
-    s1[:,0] = -s1[:,0]
+    s1[:,0] = ~s1[:,0]
     b5 = np.all(s1, axis=1)
     m5 = np.mean(means[b5], axis=0)
     
-    s1[:,1] = -s1[:,1]
+    s1[:,1] = ~s1[:,1]
     b6 = np.all(s1, axis=1)
     m6 = np.mean(means[b6], axis=0)
 
-    s1[:,0] = -s1[:,0]
+    s1[:,0] = ~s1[:,0]
     b7 = np.all(s1, axis=1)
     m7 = np.mean(means[b7], axis=0)
 
