@@ -2197,6 +2197,25 @@ class RemoveVirtualSprings(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class ApplyClothToMesh(bpy.types.Operator):
+    """Apply cloth effects to mesh for export."""
+    bl_idname = "object.modeling_cloth_apply_cloth_to_mesh"
+    bl_label = "Modeling Cloth Remove Virtual Spring"
+    bl_options = {'REGISTER', 'UNDO'}        
+    def execute(self, context):
+        ob = get_last_object()[1]
+        v_count = len(ob.data.vertices)
+        co = np.zeros(v_count * 3, dtype=np.float32)
+        ob.data.shape_keys.key_blocks['modeling cloth key'].data.foreach_get('co', co)
+        ob.data.shape_keys.key_blocks['Basis'].data.foreach_set('co', co)
+        ob.data.shape_keys.key_blocks['Basis'].mute = True
+        ob.data.shape_keys.key_blocks['Basis'].mute = False
+        ob.data.vertices.foreach_set('co', co)
+        ob.data.update()
+
+        return {'FINISHED'}
+
+
 def create_properties():            
 
     bpy.types.Object.modeling_cloth = bpy.props.BoolProperty(name="Modeling Cloth", 
@@ -2380,6 +2399,7 @@ class ModelingClothPanel(bpy.types.Panel):
         col = layout.column(align=True)
         col.label(text="Tools")        
         col.operator("object.modeling_cloth_create_sew_lines", text="Sew Lines", icon="MOD_UVPROJECT")
+        col.operator("object.modeling_cloth_apply_cloth_to_mesh", text="Apply to Mesh", icon="FILE_TICK")
         
         # modeling cloth
         col = layout.column(align=True)
@@ -2559,6 +2579,7 @@ def register():
     bpy.utils.register_class(AddVirtualSprings)
     bpy.utils.register_class(RemoveVirtualSprings)
     bpy.utils.register_class(ModelingClothSew)
+    bpy.utils.register_class(ApplyClothToMesh)
     
     
     bpy.utils.register_class(CollisionSeries)
@@ -2581,6 +2602,7 @@ def unregister():
     bpy.utils.unregister_class(AddVirtualSprings)
     bpy.utils.unregister_class(RemoveVirtualSprings)
     bpy.utils.unregister_class(ModelingClothSew)
+    bpy.utils.unregister_class(ApplyClothToMesh)
     
     
     bpy.utils.unregister_class(CollisionSeries)
