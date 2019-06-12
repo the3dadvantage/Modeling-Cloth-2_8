@@ -2273,10 +2273,14 @@ def init_cloth(self, context):
     
     sce = bpy.context.scene
     if sce is None:
+        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
+        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
+        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
         return
     
     data = sce.modeling_cloth_data_set
     extra_data = sce.modeling_cloth_data_set_extra
+    extra_data['colliders'] = None
     
     extra_data['alert'] = False
     extra_data['drag_alert'] = False
