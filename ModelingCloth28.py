@@ -103,10 +103,10 @@ def triangulate(me, cloth=None):
     # Identify bend spring groups. Each edge gets paired with two points on tips of tris around edge    
     # Restricted to edges with two linked faces on a triangulated version of the mesh
 
-    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    #"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     #cloth = None #!!!!!!!!!!!!!!!!!!!!!
-    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"    
-    print("new=======================================")
+    #"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"    
+    #print("new=======================================")
     if cloth is not None:
         link_ed = [e for e in obm.edges if len(e.link_faces) == 2]
         # exclude pinned: (pin bool is those verts that are not pinned)
@@ -264,7 +264,10 @@ def get_last_object():
     """Finds cloth objects for keeping settings active
     while selecting other objects like pins"""
     cloths = [i for i in bpy.data.objects if i.modeling_cloth] # so we can select an empty and keep the settings menu up
-    if bpy.context.active_object is None:
+    if "object" not in dir(bpy.context):
+        return
+    
+    if bpy.context.object is None:
         return
     
     if bpy.context.active_object.modeling_cloth:
@@ -632,7 +635,9 @@ def get_spring_mix(ob, eidx):
 
 def update_pin_group():
     """Updates the cloth data after changing mesh or vertex weight pins"""
-    create_instance(new=False)
+    ob = get_last_object()[1]
+    if ob.name in data:
+        create_instance(new=False)
 
 
 def collision_data_update(self, context):
@@ -744,8 +749,13 @@ def q_rotate(co, w, axis):
 
 def bend_springs(cloth, co, measure=None):
     bend_eidx, tips = cloth.bend_eidx, cloth.bend_tips
-
+    
+    # if we have no springs...
+    if tips.shape[0] < 1:
+        return
+    
     tips_co = co[tips]
+    
     bls, brs = bend_eidx[:,0], bend_eidx[:, 1]
     b_oris = co[bls]
     
@@ -1899,7 +1909,12 @@ def object_collide(cloth, object):
     #   cloth.re_col = np.empty((0,3), dtype=np.float32)
     
     #proxy = object.ob.to_mesh(bpy.context.evaluated_depsgraph_get(), True, calc_undeformed=False)
-    proxy = object.ob.to_mesh()
+    dg = object.dg
+    
+    #proxy = object.ob.to_mesh()
+    proxy = object.ob.evaluated_get(dg).data
+    
+    
     proxy_in_place(object, proxy)
     apply_in_place(cloth.ob, cloth.co, cloth)
 
@@ -2045,9 +2060,12 @@ def create_collider():
     col = Collider()
     col.ob = bpy.context.active_object
 
+    dg = bpy.context.evaluated_depsgraph_get()
+    col.dg = dg
     # get proxy
     #proxy = col.ob.to_mesh(bpy.context.evaluated_depsgraph_get(), True, calc_undeformed=False)
-    proxy = col.ob.to_mesh()
+    #proxy = col.ob.to_mesh()
+    proxy = col.ob.evaluated_get(dg).data
     
     col.co = get_proxy_co(col.ob, None, proxy)
     col.idxer = np.arange(col.co.shape[0], dtype=np.int32)
@@ -2250,9 +2268,16 @@ def global_setup():
 
 
 def init_cloth(self, context):
+    """!!!! This runs once for evey object in the scene !!!!"""
     global data, extra_data
-    data = bpy.context.scene.modeling_cloth_data_set
-    extra_data = bpy.context.scene.modeling_cloth_data_set_extra
+    
+    sce = bpy.context.scene
+    if sce is None:
+        return
+    
+    data = sce.modeling_cloth_data_set
+    extra_data = sce.modeling_cloth_data_set_extra
+    
     extra_data['alert'] = False
     extra_data['drag_alert'] = False
     extra_data['last_object'] = self
@@ -2268,11 +2293,21 @@ def init_cloth(self, context):
         cloth = create_instance() # generate an instance of the class
         data[cloth.name] = cloth  # store class in dictionary using the object name as a key
     
-    cull = [] # can't delete dict items while iterating
-    for i, value in data.items():
-        if not value.ob.modeling_cloth:
-            cull.append(i) # store keys to delete
+    remove = False    
 
+    cull = [] # can't delete dict items while iterating
+    
+    # check if item is still in scene and not deleted by user.
+    for i, value in data.items():
+        if i not in bpy.data.objects:
+            remove = True
+            cull.append(i)
+        
+        if not remove:    
+            if not value.ob.modeling_cloth:
+                cull.append(i) # store keys to delete
+        remove = False
+        
     for i in cull:
         del data[i]
 
