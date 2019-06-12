@@ -28,12 +28,10 @@
 
 
 """Bug list"""
+# if a subsurf modifier is on the cloth, the grab tool freaks
 
 # updates to addons
 # https://www.youtube.com/watch?v=Mjy-zGG3Wk4
-
-# change log:
-# added ob.to_mesh_clear() 6/3/2019 on collider in two places
 
 
 bl_info = {
@@ -1900,10 +1898,9 @@ def object_collide(cloth, object):
     #   cloth.col_idx = np.array([], dtype=np.int32)
     #   cloth.re_col = np.empty((0,3), dtype=np.float32)
     
-    dp = bpy.context.evaluated_depsgraph_get()
-    proxy = object.ob.evaluated_get(dp).data
+    #proxy = object.ob.to_mesh(bpy.context.evaluated_depsgraph_get(), True, calc_undeformed=False)
+    proxy = object.ob.to_mesh()
     proxy_in_place(object, proxy)
-    
     apply_in_place(cloth.ob, cloth.co, cloth)
 
     inner_margin = object.ob.modeling_cloth_inner_margin
@@ -1977,6 +1974,7 @@ def object_collide(cloth, object):
                         
     object.vel[:] = object.co    
     revert_in_place(cloth.ob, cloth.co)
+    #bpy.data.meshes.remove(proxy)
 
 
 # self collider =============================================
@@ -2048,8 +2046,8 @@ def create_collider():
     col.ob = bpy.context.active_object
 
     # get proxy
-    dp = bpy.context.evaluated_depsgraph_get()
-    proxy = col.ob.evaluated_get(dp).data
+    #proxy = col.ob.to_mesh(bpy.context.evaluated_depsgraph_get(), True, calc_undeformed=False)
+    proxy = col.ob.to_mesh()
     
     col.co = get_proxy_co(col.ob, None, proxy)
     col.idxer = np.arange(col.co.shape[0], dtype=np.int32)
@@ -2062,7 +2060,9 @@ def create_collider():
     proxy_v_normals_in_place(col, True, proxy)
     marginalized = col.co + col.v_normals * col.ob.modeling_cloth_outer_margin
     col.cross_vecs, col.origins, col.normals = get_tri_normals(marginalized[col.tridex])    
-
+    
+    # remove proxy
+    #bpy.data.meshes.remove(proxy, do_unlink=True, do_id_user=True, do_ui_user=True)
     return col
 
 
@@ -2447,7 +2447,7 @@ class ModelingClothPin(bpy.types.Operator):
 
 # drag===================================
 # drag===================================
-#[‘DEFAULT’, ‘NONE’, ‘WAIT’, ‘CROSSHAIR’, ‘MOVE_X’, ‘MOVE_Y’, ‘KNIFE’, ‘TEXT’, ‘PAINT_BRUSH’, ‘HAND’, ‘SCROLL_X’, ‘SCROLL_Y’, ‘SCROLL_XY’, ‘EYEDROPPER’]
+#[â€˜DEFAULTâ€™, â€˜NONEâ€™, â€˜WAITâ€™, â€˜CROSSHAIRâ€™, â€˜MOVE_Xâ€™, â€˜MOVE_Yâ€™, â€˜KNIFEâ€™, â€˜TEXTâ€™, â€˜PAINT_BRUSHâ€™, â€˜HANDâ€™, â€˜SCROLL_Xâ€™, â€˜SCROLL_Yâ€™, â€˜SCROLL_XYâ€™, â€˜EYEDROPPERâ€™]
 
 def main_drag(context, event):
     # get the context arguments
