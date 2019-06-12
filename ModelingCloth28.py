@@ -2942,7 +2942,7 @@ class ModelingClothPanel(bpy.types.Panel):
         col = layout.column(align=True)
         col.label(text='Support Addons')
         col.operator("object.modeling_cloth_donate", text="Donate")
-        col.operator("object.modeling_cloth_collision_series", text="By Books")
+        col.operator("object.modeling_cloth_collision_series", text="Buy Books")
         #col.operator("object.modeling_cloth_collision_series_kindle", text="Kindle")
         
         # tools
@@ -3066,7 +3066,7 @@ class ModelingClothPanel(bpy.types.Panel):
                 col.label(text='Support Addons')
                 #col.operator("object.modeling_cloth_collision_series_kindle", text="Kindle")
                 col.operator("object.modeling_cloth_donate", text="Donate")
-                col.operator("object.modeling_cloth_collision_series", text="By Books")
+                col.operator("object.modeling_cloth_collision_series", text="Buy Books")
 
 
 class CollisionSeries(bpy.types.Operator):
