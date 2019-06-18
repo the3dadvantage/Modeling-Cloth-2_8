@@ -3212,7 +3212,6 @@ if __name__ == "__main__":
         bpy.context.scene.modeling_cloth_data_set.clear()
         bpy.context.scene.modeling_cloth_data_set_extra.clear()
     
-    
     for i in bpy.data.objects:
         i.modeling_cloth = False
         i.modeling_cloth_object_collision = False
