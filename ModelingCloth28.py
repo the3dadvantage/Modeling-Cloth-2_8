@@ -2105,6 +2105,8 @@ def create_self_collider():
 
 # collide object updater
 def collision_object_update(self, context):
+    init_cloth(self, context)
+    
     """Updates the collider object"""    
     collide = self.modeling_cloth_object_collision
     # remove objects from dict if deleted
@@ -2279,7 +2281,8 @@ def init_cloth(self, context):
     
     data = sce.modeling_cloth_data_set
     extra_data = sce.modeling_cloth_data_set_extra
-    extra_data['colliders'] = None
+    #if "colliders"    
+        #extra_data['colliders'] = None
     
     extra_data['alert'] = False
     extra_data['drag_alert'] = False
@@ -2287,9 +2290,9 @@ def init_cloth(self, context):
     extra_data['clicked'] = False
     
     # object collisions
-    #colliders = [i for i in bpy.data.objects if i.modeling_cloth_object_collision]
-    #if len(colliders) == 0:    
-        #extra_data['colliders'] = None    
+    colliders = [i for i in bpy.data.objects if i.modeling_cloth_object_collision]
+    if len(colliders) == 0:    
+        extra_data['colliders'] = None    
     
     # iterate through dict: for i, j in d.items()
     if self.modeling_cloth:
