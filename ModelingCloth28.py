@@ -325,6 +325,7 @@ def get_bmesh(obj=None):
 
 
 def get_extend_springs(cloth, extend_springs=False):
+    
     ob = cloth.ob
     obm = get_bmesh(ob)
     obm.edges.ensure_lookup_table()
@@ -365,9 +366,11 @@ def get_extend_springs(cloth, extend_springs=False):
     for i in obm.verts:
         faces = i.link_faces
         f_verts = [[v for v in f.verts if v != i] for f in faces]
-        lv = np.hstack(f_verts)
-        for v in lv:
-            uniidx.append([i.index, v.index])
+
+        if len(f_verts) > 0:
+            lv = np.hstack(f_verts)
+            for v in lv:
+                uniidx.append([i.index, v.index])
     
     flip = np.sort(uniidx, axis=1)    
     uni = np.empty(shape=(0,2), dtype=np.int32)
@@ -377,7 +380,6 @@ def get_extend_springs(cloth, extend_springs=False):
         if this.shape[0] > 0:
             idx = this[np.unique(this[:,1], return_index=True)[1]]
             uni = np.append(uni, idx, axis=0)
-    
 
     if extend_springs:
         extend = []
@@ -2273,9 +2275,6 @@ def init_cloth(self, context):
     
     sce = bpy.context.scene
     if sce is None:
-        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
-        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
-        print("scene was None !!!!!!!!!!!!!!!!!!!!!!")
         return
     
     data = sce.modeling_cloth_data_set
@@ -2288,9 +2287,9 @@ def init_cloth(self, context):
     extra_data['clicked'] = False
     
     # object collisions
-    colliders = [i for i in bpy.data.objects if i.modeling_cloth_object_collision]
-    if len(colliders) == 0:    
-        extra_data['colliders'] = None    
+    #colliders = [i for i in bpy.data.objects if i.modeling_cloth_object_collision]
+    #if len(colliders) == 0:    
+        #extra_data['colliders'] = None    
     
     # iterate through dict: for i, j in d.items()
     if self.modeling_cloth:
@@ -3209,6 +3208,10 @@ if __name__ == "__main__":
     # testing!!!!!!!!!!!!!!!!
     #generate_collision_data(bpy.context.active_object)
     # testing!!!!!!!!!!!!!!!!
+    if "modeling_cloth_data_set" in dir(bpy.context.scene):
+        bpy.context.scene.modeling_cloth_data_set.clear()
+        bpy.context.scene.modeling_cloth_data_set_extra.clear()
+    
     
     for i in bpy.data.objects:
         i.modeling_cloth = False
