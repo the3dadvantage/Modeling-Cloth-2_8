@@ -2574,9 +2574,10 @@ def main_drag(context, event):
     if extra_data['stored_mouse'] is not None:
         move = np.array(extra_data['target']) - extra_data['stored_mouse']
         if rv3d.is_perspective:
-            extra_data['move'] = move * np.sqrt(extra_data['le_sq'])
-        else:    
-            extra_data['move'] = move
+            extra_data['move'] = (move * np.sqrt(extra_data['le_sq'])) @ np.array(extra_data['matrix'])[:3, :3].T
+
+        else:
+            extra_data['move'] = move @ np.array(extra_data['matrix'])[:3, :3].T
                    
                    
 # dragger===
