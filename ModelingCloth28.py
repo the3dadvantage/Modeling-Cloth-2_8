@@ -2554,7 +2554,7 @@ def main_drag(context, event):
                         
             hit_world = matrix @ hit
             length_squared = (hit_world - ray_origin).length_squared
-
+            
             if best_obj is None or length_squared < best_length_squared:
                 best_length_squared = length_squared
                 best_obj = obj
@@ -2563,6 +2563,7 @@ def main_drag(context, event):
             if best_obj is not None:    
 
                 if extra_data['clicked']:    
+                    extra_data['le_sq'] = length_squared
                     extra_data['matrix'] = matrix.inverted()
                     data[best_obj.name].clicked = True
                     extra_data['stored_mouse'] = np.copy(target)
@@ -2572,7 +2573,10 @@ def main_drag(context, event):
 
     if extra_data['stored_mouse'] is not None:
         move = np.array(extra_data['target']) - extra_data['stored_mouse']
-        extra_data['move'] = (move @ np.array(extra_data['matrix'])[:3, :3].T)
+        if rv3d.is_perspective:
+            extra_data['move'] = move * np.sqrt(extra_data['le_sq'])
+        else:    
+            extra_data['move'] = move
                    
                    
 # dragger===
@@ -2965,10 +2969,10 @@ def remove_properties():
     del(bpy.types.Scene.modeling_cloth_data_set_extra)
 
 
-class ModelingClothPanel(bpy.types.Panel):
+class PANEL_PT_modelingCloth(bpy.types.Panel):
     """Modeling Cloth Panel"""
     bl_label = "Modeling Cloth Panel"
-    bl_idname = "Modeling Cloth"
+    bl_idname = "PANEL_PT_modelingCloth"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Extended Tools"
@@ -3161,7 +3165,7 @@ def collision_series(paperback=True, kindle=True):
 
 def register():
     create_properties()
-    bpy.utils.register_class(ModelingClothPanel)
+    bpy.utils.register_class(PANEL_PT_modelingCloth)
     bpy.utils.register_class(ModelingClothPin)
     bpy.utils.register_class(ModelingClothDrag)
     bpy.utils.register_class(DeletePins)
@@ -3184,7 +3188,7 @@ def register():
 
 def unregister():
     remove_properties()
-    bpy.utils.unregister_class(ModelingClothPanel)
+    bpy.utils.unregister_class(PANEL_PT_modelingCloth)
     bpy.utils.unregister_class(ModelingClothPin)
     bpy.utils.unregister_class(ModelingClothDrag)
     bpy.utils.unregister_class(DeletePins)
