@@ -2328,8 +2328,8 @@ def main(context, event):
     # get the ray from the viewport and mouse
     view_vector = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-
-    ray_target = ray_origin + view_vector
+    
+    #ray_target = ray_origin + view_vector
     
     guide = create_giude()
 
@@ -2346,12 +2346,9 @@ def main(context, event):
 
         # get the ray relative to the object
         matrix_inv = matrix.inverted()
-        ray_origin_obj = matrix_inv @ ray_origin
-        ray_target_obj = matrix_inv @ ray_target
-        ray_direction_obj = ray_target_obj - ray_origin_obj
-
+        
         bv = mathutils.bvhtree.BVHTree.FromObject(obj, bpy.context.evaluated_depsgraph_get())
-        location, normal, face_index, success = bv.ray_cast(ray_origin_obj, view_vector)
+        location, normal, face_index, success = bv.ray_cast(matrix_inv @ ray_origin, view_vector @ matrix)
 
 
         # cast the ray
@@ -2379,7 +2376,7 @@ def main(context, event):
             m.show_viewport = s
 
         if hit is not None:
-            hit_world = matrix @ hit
+            hit_world = matrix.inverted() @ hit
             vidx = [v for v in obj.data.polygons[face_index].vertices]
             verts = np.array([matrix @ obj.data.shape_keys.key_blocks['modeling cloth key'].data[v].co for v in obj.data.polygons[face_index].vertices])
             vecs = verts - np.array(hit_world)
@@ -2396,8 +2393,8 @@ def main(context, event):
                 
                 if extra_data['just_clicked']:
                     extra_data['just_clicked'] = False
-                    best_length_squared = length_squared
-                    best_obj = obj
+                    #best_length_squared = length_squared
+                    #best_obj = obj
                    
 
 # sewing --------->>>
@@ -2502,7 +2499,9 @@ def main_drag(context, event):
     ray_origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
 
     ray_target = ray_origin + view_vector
-
+    
+    
+    
     def visible_objects_and_duplis():
         """Loop over (object, matrix) pairs (mesh only)"""
 
@@ -2520,12 +2519,9 @@ def main_drag(context, event):
 
         # get the ray relative to the object
         matrix_inv = matrix.inverted()
-        ray_origin_obj = matrix_inv @ ray_origin
-        ray_target_obj = matrix_inv @ ray_target
-        ray_direction_obj = ray_target_obj - ray_origin_obj
 
         bv = mathutils.bvhtree.BVHTree.FromObject(obj, bpy.context.evaluated_depsgraph_get())
-        location, normal, face_index, success = bv.ray_cast(ray_origin_obj, view_vector)
+        location, normal, face_index, success = bv.ray_cast(matrix_inv @ ray_origin, view_vector @ matrix)
         
         if success:
             return location, normal, face_index, ray_target
@@ -2598,7 +2594,9 @@ class ModelingClothDrag(bpy.types.Operator):
         
     def modal(self, context, event):
         bpy.context.window.cursor_set("HAND")
-        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
+        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'NUMPAD_0',
+        'NUMPAD_PERIOD','NUMPAD_1', 'NUMPAD_2', 'NUMPAD_3', 'NUMPAD_4',
+         'NUMPAD_5', 'NUMPAD_6', 'NUMPAD_7', 'NUMPAD_8', 'NUMPAD_9'}:
             # allow navigation
             return {'PASS_THROUGH'}
         
